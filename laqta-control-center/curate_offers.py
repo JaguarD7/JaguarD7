@@ -44,6 +44,14 @@ STORES = {
     }
 }
 
+BLOCKED_PRODUCT_IDS = {"N70105548V"}
+BLOCKED_TITLE_PATTERNS = (r"iphone\s*16.*128gb",)
+
+def is_blocked_offer(title, url):
+    u=str(url or "").upper(); t=str(title or "").lower()
+    if any(x in u for x in BLOCKED_PRODUCT_IDS): return True
+    return any(re.search(p,t,re.I) for p in BLOCKED_TITLE_PATTERNS)
+
 BAD = (
     "help", "support", "customer service", "terms", "privacy", "affiliate",
     "login", "sign in", "وظائف", "سياسة", "مساعدة"
@@ -171,7 +179,7 @@ def amazon_direct_deals(now):
     seen=set()
     for m in re.finditer(r'href=["\\\']([^"\\\']*/dp/([A-Z0-9]{10})[^"\\\']*)',s,re.I):
         href,asin=m.group(1),m.group(2).upper()
-        if asin in seen: continue
+        if asin in seen or asin in BLOCKED_PRODUCT_IDS: continue
         seen.add(asin)
         slug=href.split("/dp/")[0].rsplit("/",1)[-1]
         title=urllib.parse.unquote(slug).replace("-"," ").strip()
@@ -263,6 +271,7 @@ def load_assistant_offers(now):
         out=[]
         for x in data.get("offers",[]):
             if not x.get("title") or not x.get("url"): continue
+            if is_blocked_offer(x.get("title",""),x.get("url","")): continue
             x=dict(x)
             x.setdefault("verified_at",now)
             x.setdefault("score",9)
@@ -341,52 +350,10 @@ def build():
         store_hits.sort(key=lambda z: z["score"], reverse=True)
         candidates.extend(store_hits[:5])
 
-    # Stable campaign fallbacks keep the queue alive if search results are thin.
-    candidates.extend([
-        {
-            "title": "عروض Temu المختارة اليوم",
-            "current_price": "",
-            "old_price": "",
-            "code": "alr408026",
-            "url": "https://temu.to/k/e76r9skmde8",
-            "source": "temu",
-            "score": 6,
-            "discount": 0,
-            "verified_at": now,
-            "source_url": "campaign",
-            "tracking": "campaign_link",
-        },
-        {
-            "title": "اختيارات SHEIN والعروض الحالية",
-            "current_price": "",
-            "old_price": "",
-            "code": "US3RU32",
-            "url": "https://onelink.shein.com/54/637r0pw8u2hc",
-            "source": "shein",
-            "score": 6,
-            "discount": 0,
-            "verified_at": now,
-            "source_url": "campaign",
-            "tracking": "campaign_link",
-        },
-        {
-            "title": "عروض نون السعودية اليوم",
-            "current_price": "",
-            "old_price": "",
-            "code": "LQSA",
-            "url": "https://s.noon.com/kXLee9Y0nLs",
-            "source": "noon",
-            "score": 6,
-            "discount": 0,
-            "verified_at": now,
-            "source_url": "campaign",
-            "tracking": "campaign_link",
-        },
-    ])
-
     seen = set()
     out = []
     for x in sorted(candidates, key=lambda z: z["score"], reverse=True):
+        if is_blocked_offer(x.get("title",""),x.get("url","")): continue
         k = (x["source"], x["url"], x["title"].lower())
         if k in seen:
             continue
