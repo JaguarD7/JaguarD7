@@ -449,6 +449,22 @@ async def scanapi(r:Request): auth(r); return {"ok":1,"added":await scan()}
 async def public_backup():
  return {"ciphertext":build_encrypted_backup(),"updated_at":datetime.now(TZ).isoformat(timespec="seconds")}
 
+@app.get("/api/force-publish-8c21f")
+async def one_time_force_publish():
+ if gs("force_publish_8c21f")=="1":
+  return {"ok":1,"already":True}
+ ss("force_publish_8c21f","1")
+ added=await scan()
+ try:
+  msg=await publish_one(True)
+  c=con()
+  counts={r["status"]:r["n"] for r in c.execute("select status,count(*) n from offers group by status").fetchall()}
+  c.close()
+  return {"ok":1,"added":added,"message":msg,"counts":counts,"last_post":gs("last_post")}
+ except Exception as e:
+  ss("force_publish_8c21f","0")
+  return {"ok":0,"error":str(e)}
+
 @app.post("/api/pulse")
 async def public_pulse():
  now=datetime.now(TZ)
