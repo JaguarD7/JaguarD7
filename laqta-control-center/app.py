@@ -39,7 +39,7 @@ def log(m,l="info"):
 def auth(r):
  if not r.session.get("ok"): raise HTTPException(401,"login_required")
 
-BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand")
+BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","buffer_channels_json","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand")
 
 def offer_fp(source,url,title):
  return hashlib.sha256(f"{source}|{url}|{title}".encode("utf-8","ignore")).hexdigest()
@@ -81,7 +81,7 @@ def init():
   cols=[r["name"] for r in c.execute("pragma table_info(offers)").fetchall()]
   if "score" not in cols: c.execute("alter table offers add column score integer default 0")
  except: pass
- defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","automation":"0","interval":"120","max_day":"8","mode":"queue","start":"08:00","end":"23:30","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
+ defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"60","max_day":"24","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
 class Pwd(BaseModel): password:str
@@ -94,6 +94,8 @@ class Source(BaseModel): name:str; url:str
 async def up():
  init()
  await restore_backup()
+ # LAQTA always-on policy requested by owner: one offer every hour, 24/day.
+ ss("interval","60"); ss("max_day","24"); ss("mode","now"); ss("start","00:00"); ss("end","23:59")
  if gs("buffer_key") and gs("buffer_channel"):
   ss("automation","1")
  asyncio.create_task(loop())
@@ -162,7 +164,10 @@ async def discover():
  ss("buffer_org",org_id)
  ss("buffer_channel",ch.get("id",""))
  ss("buffer_channel_name",ch.get("displayName") or ch.get("name") or "X")
- return {"organization":org,"channel":ch}
+ # Save every connected social channel so the same deal can cross-post everywhere.
+ all_ids=[z.get("id") for z in chans if z.get("id")]
+ ss("buffer_channels_json",json.dumps(all_ids))
+ return {"organization":org,"channel":ch,"channels":chans}
 @app.post("/api/buffer/test")
 async def btest(r:Request):
  auth(r)
@@ -173,56 +178,84 @@ def _money(v):
  m=re.search(r"\d+(?:\.\d+)?",s)
  return float(m.group()) if m else None
 
+def _hashtags(title,src):
+ s=(title+" "+src).lower()
+ tags=["#عروض_السعودية"]
+ if "noon" in src: tags.append("#نون")
+ elif "temu" in src: tags.append("#تيمو")
+ elif "shein" in src: tags.append("#شي_إن")
+ elif "amazon" in src: tags.append("#امازون_السعودية")
+ if any(k in s for k in ("عطر","عطور","fragrance","perfume")): tags.append("#عطور")
+ elif any(k in s for k in ("سماعة","سماعات","ماوس","كيبل","تابلت","هاتف","جوال","شاحن","باور","gaming","rgb")): tags.append("#تقنية")
+ elif any(k in s for k in ("مطبخ","منزل","رف","كرسي","أثاث")): tags.append("#المنزل")
+ elif any(k in s for k in ("ملابس","حذاء","أحذية","شنط","ساعة","ساعات")): tags.append("#تسوق")
+ else: tags.append("#خصومات")
+ return " ".join(tags[:3])
+
 def compose(o):
  title=re.sub(r"\s+"," ",o["title"].strip())
- if len(title)>92: title=title[:89].rstrip()+"..."
+ if len(title)>78: title=title[:75].rstrip()+"..."
  cp=o["current_price"].strip(); oldp=o["old_price"].strip(); code=o["code"].strip(); url=o["url"].strip()
  src=(o["source"] or "").lower()
  now=_money(cp); before=_money(oldp)
  hooks={
-  "noon":["🔥 لقطة نون اليوم","⚡ سعر يستاهل الوقفة","🎯 لقطة نون سريعة"],
-  "temu":["🔥 لقطة Temu اليوم","😮‍💨 سعر Temu ملفت","⚡ لقطة تستاهل تشيكها"],
-  "shein":["🔥 لقطة SHEIN اليوم","✨ اختيار يستاهل","⚡ لقطة SHEIN سريعة"],
-  "amazon":["🔥 لقطة Amazon اليوم","🎯 اختيار Amazon يستاهل","⚡ سعر ملفت على Amazon"]
+  "noon":["🔥 لقطة نون","⚡ عرض نون","🎯 لقطة اليوم من نون"],
+  "temu":["🔥 لقطة Temu","😮‍💨 سعر Temu","⚡ لقطة Temu"],
+  "shein":["🔥 لقطة SHEIN","✨ عرض SHEIN","⚡ لقطة SHEIN"],
+  "amazon":["🔥 لقطة Amazon","🎯 عرض Amazon","⚡ سعر Amazon"]
  }
- arr=next((v for k,v in hooks.items() if k in src),["🔥 لقطة اليوم","⚡ لقطة سريعة","🎯 اختيار يستاهل"])
+ arr=next((v for k,v in hooks.items() if k in src),["🔥 لقطة اليوم","⚡ عرض قوي","🎯 لقطة"])
  parts=[arr[(sum(map(ord,title))+len(url))%len(arr)],title]
  if now is not None and before is not None and before>now:
   pct=round((before-now)/before*100); parts.append(f"💸 {cp} بدل {oldp} — خصم {pct}%")
  elif cp:
   parts.append(f"💸 {cp}")
  if code:
-  if "noon" in src: parts.append(f"🏷️ {code} | خصم 10% حسب شروط نون")
-  elif "temu" in src: parts.append(f"🏷️ {code} | الخصم حسب الأهلية والحملة")
-  elif "shein" in src: parts.append(f"🏷️ {code} | ابحث بالكود داخل SHEIN")
+  if "noon" in src: parts.append(f"🏷️ {code} | حسب شروط نون")
+  elif "temu" in src: parts.append(f"🏷️ {code} | حسب الأهلية")
+  elif "shein" in src: parts.append(f"🏷️ {code} | حسب الأهلية")
   else: parts.append(f"🏷️ {code}")
  if url: parts.append(f"👇 {url}")
- parts.append("لقطة | الزبدة بدون لف 🎯")
- d=gs("disclosure").strip()
- if d: parts.append(d)
+ parts.append(_hashtags(title,src))
  text="\n".join(parts)
+ if len(text)>278:
+  # Never cut the link or hashtags; shorten only the product title.
+  short=title[:48].rstrip()+"..."
+  parts[1]=short
+  text="\n".join(parts)
  return text[:278]
 async def publish_text(text):
- cid=gs("buffer_channel")
- if not cid:
+ if not gs("buffer_channel"):
   await discover()
-  cid=gs("buffer_channel")
+ try:
+  ids=json.loads(gs("buffer_channels_json","[]"))
+ except:
+  ids=[]
+ if not ids:
+  ids=[gs("buffer_channel")]
+ ids=[x for x in ids if x]
+ if not ids: raise RuntimeError("لا توجد قنوات Buffer متصلة")
  mode="shareNow" if gs("mode")=="now" else "addToQueue"
  q="""mutation CreatePost($input: CreatePostInput!) {
    createPost(input:$input) {
-     ... on PostActionSuccess {
-       post { id text dueAt status shareMode }
-     }
-     ... on MutationError {
-       message
-     }
+     ... on PostActionSuccess { post { id text dueAt status shareMode } }
+     ... on MutationError { message }
    }
  }"""
- d=await bgql(q,{"input":{"text":text,"channelId":cid,"schedulingType":"automatic","mode":mode}})
- result=d.get("createPost") or {}
- if result.get("message"): raise RuntimeError(result.get("message"))
- if not result.get("post"): raise RuntimeError("Buffer لم يرجع Post بعد طلب النشر")
- return result.get("post")
+ sent=[]
+ errors=[]
+ for cid in ids:
+  try:
+   d=await bgql(q,{"input":{"text":text,"channelId":cid,"schedulingType":"automatic","mode":mode}})
+   result=d.get("createPost") or {}
+   if result.get("message"): raise RuntimeError(result.get("message"))
+   if not result.get("post"): raise RuntimeError("Buffer لم يرجع Post")
+   sent.append(result.get("post"))
+  except Exception as e:
+   errors.append(str(e))
+ if not sent:
+  raise RuntimeError("فشل النشر على كل القنوات: "+" | ".join(errors[:3]))
+ return sent
 async def publish_one(force=False):
  now=datetime.now(TZ); day=now.date().isoformat(); c=con(); n=c.execute("select posts from counters where day=?",(day,)).fetchone(); used=n["posts"] if n else 0
  if not force and used>=int(gs("max_day")): c.close(); return "وصل الحد اليومي"
