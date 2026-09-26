@@ -100,6 +100,13 @@ def init():
   cols=[r["name"] for r in c.execute("pragma table_info(offers)").fetchall()]
   if "score" not in cols: c.execute("alter table offers add column score integer default 0")
   if "tags" not in cols: c.execute("alter table offers add column tags text default ''")
+  if "fingerprint_key" not in cols: c.execute("alter table offers add column fingerprint_key text default ''")
+ except: pass
+ try:
+  rows=c.execute("select id,source,url,title,fingerprint_key from offers").fetchall()
+  for r in rows:
+   if not r["fingerprint_key"]:
+    c.execute("update offers set fingerprint_key=? where id=?",(offer_fp(r["source"],r["url"],r["title"]),r["id"]))
  except: pass
  defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"30","max_day":"48","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
@@ -227,15 +234,24 @@ def _hashtags(title,src,raw=""):
   x=x.strip(".,،;:!؟")
   if len(x)>1 and x not in tags: tags.append(x)
  s=(title+" "+src).lower()
- if "ايفون" in s or "iphone" in s: base=["#ايفون","#ابل","#تقنية","#تسوق"]
- elif "قهوة" in s or "v60" in s or "coffee" in s: base=["#قهوة","#القهوه_السعوديه","#تسوق","#خصومات"]
- elif "عطر" in s or "perfume" in s or "fragrance" in s: base=["#عطور","#عطور_رجالية","#تسوق","#خصومات"]
- elif any(k in s for k in ("سماعة","سماعات","ماوس","كيبورد","كيبل","تابلت","شاحن","باور","gaming","rgb")): base=["#تقنية","#الكترونيات","#تسوق","#خصومات"]
- elif any(k in s for k in ("مطبخ","منزل","كرسي","طاولة","أثاث")): base=["#المنزل","#تسوق","#عروض","#خصومات"]
- else: base=["#عروض","#خصومات","#تسوق","#عروض_السعودية"]
- for x in base+["#عروض_السعودية"]:
+ if "ايفون" in s or "iphone" in s: base=["#ايفون","#ابل","#تقنية","#تسوق","#عروض_السعودية"]
+ elif "قهوة" in s or "v60" in s or "coffee" in s: base=["#قهوة","#القهوه_السعوديه","#تسوق","#خصومات","#عروض_السعودية"]
+ elif "عطر" in s or "perfume" in s or "fragrance" in s: base=["#عطور","#عطور_رجالية","#تسوق","#خصومات","#عروض_السعودية"]
+ elif any(k in s for k in ("سماعة","سماعات","ماوس","كيبورد","كيبل","تابلت","شاحن","باور","gaming","rgb")): base=["#تقنية","#الكترونيات","#تسوق","#خصومات","#عروض_السعودية"]
+ elif any(k in s for k in ("مطبخ","منزل","كرسي","طاولة","أثاث")): base=["#المنزل","#تسوق","#عروض","#خصومات","#عروض_السعودية"]
+ else: base=["#عروض","#خصومات","#تسوق","#وفر","#عروض_السعودية"]
+ for x in base:
   if x not in tags: tags.append(x)
- return " ".join(tags[:5])
+ return tags[:5]
+
+def _xlen(text):
+ # X counts URLs with a fixed t.co length; approximate that instead of raw URL length.
+ total=0; pos=0
+ for m in re.finditer(r"https?://\S+",text):
+  total+=len(text[pos:m.start()])+23
+  pos=m.end()
+ total+=len(text[pos:])
+ return total
 
 def compose(o):
  title=re.sub(r"\s+"," ",o["title"].strip())
@@ -270,26 +286,32 @@ def compose(o):
    [title,f"لقيته بهذا السعر: {cp}" if cp else ""],
    ["موجود الآن بهذا السعر 👀",title,f"{cp}" if cp else ""]
   ]
- parts=[x for x in styles[seed] if x]
+ core=[x for x in styles[seed] if x]
  if code:
-  if "noon" in src: parts.append(f"كود: {code} — حسب شروط نون")
-  elif "temu" in src: parts.append(f"كود: {code} — حسب الأهلية")
-  elif "shein" in src: parts.append(f"كود: {code} — حسب الأهلية")
-  else: parts.append(f"كود: {code}")
- if url: parts.append(url)
- if tags: parts.append(tags)
- parts.append("رابط عمولة")
- text="\n".join(parts)
- if len(text)>278:
-  title_short=title[:44].rstrip()+"..."
-  parts=[title_short if x==title else x for x in parts]
-  text="\n".join(parts)
- if len(text)>278 and tags:
-  parts=[x for x in parts if x!=tags]
-  short_tags=" ".join(tags.split()[:3])
-  parts.insert(-1,short_tags)
-  text="\n".join(parts)
- return text[:278]
+  if "noon" in src: core.append(f"كود: {code} — حسب شروط نون")
+  elif "temu" in src: core.append(f"كود: {code} — حسب الأهلية")
+  elif "shein" in src: core.append(f"كود: {code} — حسب الأهلية")
+  else: core.append(f"كود: {code}")
+ if url: core.append(url)
+
+ def assemble(ttags,short_title=None):
+  p=[]
+  for x in core:
+   if x==title and short_title: p.append(short_title)
+   else: p.append(x)
+  if ttags: p.append(" ".join(ttags))
+  p.append("رابط عمولة")
+  return "\n".join(p)
+
+ text=assemble(tags)
+ if _xlen(text)>278:
+  text=assemble(tags,title[:55].rstrip()+"...")
+ while _xlen(text)>278 and len(tags)>2:
+  tags=tags[:-1]
+  text=assemble(tags,title[:48].rstrip()+"...")
+ if _xlen(text)>278:
+  text=assemble(tags,title[:34].rstrip()+"...")
+ return text
 
 async def publish_text(text):
  if not gs("buffer_channel"):
@@ -385,7 +407,7 @@ async def offers(r:Request):
  auth(r); c=con(); a=[dict(x) for x in c.execute("select * from offers order by id desc limit 100")]; c.close(); return a
 @app.post("/api/offers")
 async def addoffer(p:Offer,r:Request):
- auth(r); c=con(); c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags) values(?,?,?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"),0,p.tags)); c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
+ auth(r); c=con(); fp=offer_fp(p.source,p.url,p.title); c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags,fingerprint_key) values(?,?,?,?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"),0,p.tags,fp)); c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
 @app.delete("/api/offers/{oid}")
 async def deloffer(oid:int,r:Request):
  auth(r); c=con(); c.execute("delete from offers where id=?",(oid,)); c.commit(); c.close(); return {"ok":1}
@@ -408,15 +430,16 @@ async def import_curated():
   for it in items:
    title=re.sub(r"\s+"," ",str(it.get("title",""))).strip()
    url=str(it.get("url","")).strip()
-   if not title or not url or int(it.get("score",0))<5: continue
+   if not title or not url or int(it.get("score",0))<8: continue
+   if url in (GENERIC_NOON,GENERIC_TEMU,GENERIC_SHEIN): continue
    src=str(it.get("source","auto"))
    fp=offer_fp(src,url,title)
    c=con()
-   ex=c.execute("select 1 from offers where fingerprint_key=?",(fp,)).fetchone() if "fingerprint_key" in [r["name"] for r in c.execute("pragma table_info(offers)").fetchall()] else c.execute("select 1 from offers where url=? or title=?",(url,title)).fetchone()
+   ex=c.execute("select 1 from offers where fingerprint_key=?",(fp,)).fetchone()
    done=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
    if not ex and not done:
-    c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags) values(?,?,?,?,?,?,?,?,?,?)",
-      (title,str(it.get("current_price","")),str(it.get("old_price","")),str(it.get("code","")),url,src,"new",datetime.now(TZ).isoformat(timespec="seconds"),int(it.get("score",0)),str(it.get("tags",""))))
+    c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags,fingerprint_key) values(?,?,?,?,?,?,?,?,?,?,?)",
+      (title,str(it.get("current_price","")),str(it.get("old_price","")),str(it.get("code","")),url,src,"new",datetime.now(TZ).isoformat(timespec="seconds"),int(it.get("score",0)),str(it.get("tags","")),fp))
     c.commit(); added+=1
    c.close()
  except Exception as e:
