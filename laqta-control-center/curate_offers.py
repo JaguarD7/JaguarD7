@@ -388,7 +388,7 @@ def build():
             continue
         seen.add(k)
         out.append(x)
-        if len(out) >= 18:
+        if len(out) >= 30:
             break
 
     return {"generated_at": now, "offers": out}
