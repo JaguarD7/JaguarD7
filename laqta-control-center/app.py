@@ -114,15 +114,45 @@ async def btest(r:Request):
  auth(r)
  try: ch=await discover(); log("تم الاتصال بـ Buffer"); return {"ok":1,"channel":ch}
  except Exception as e: log(str(e),"error"); raise HTTPException(400,str(e))
+def _money(v):
+ s=str(v or "").replace("ر.س","").replace("ريال","").replace(",","").strip()
+ m=re.search(r"\d+(?:\.\d+)?",s)
+ return float(m.group()) if m else None
+
 def compose(o):
- parts=[f"🔥 {o['title'].strip()}"]; cp=o["current_price"].strip(); old=o["old_price"].strip(); code=o["code"].strip(); url=o["url"].strip()
- if cp and old: parts.append(f"السعر الآن: {cp} بدل {old} 💸")
- elif cp: parts.append(f"السعر: {cp} 💸")
- if code: parts.append(f"🎟️ كود الخصم: {code}")
- if url: parts.append(f"🔗 {url}")
+ title=re.sub(r"\s+"," ",o["title"].strip())
+ cp=o["current_price"].strip(); oldp=o["old_price"].strip(); code=o["code"].strip(); url=o["url"].strip()
+ src=(o["source"] or "").lower()
+ now=_money(cp); before=_money(oldp)
+ hooks=[
+  "🔥 لقطة اليوم اللي تستاهل توقف عندها!",
+  "🚨 لقطة قوية للي يحب يوفر صح!",
+  "😮‍💨 السعر هذا بصراحة لقطة!",
+  "⚡ إذا كنت تنتظر سعر زين… هذا وقتها.",
+  "🎯 لقطة تستاهل تنحفظ قبل ما يتغير السعر."
+ ]
+ idx=(sum(ord(x) for x in title)+len(code)+len(url))%len(hooks)
+ parts=[hooks[idx], title]
+ if now is not None and before is not None and before>now:
+  save=before-now; pct=round(save/before*100)
+  parts.append(f"💸 الآن {cp} بدل {oldp} — توفير حوالي {save:.0f} ر.س ({pct}%)")
+ elif cp:
+  parts.append(f"💸 السعر الظاهر الآن: {cp}")
+ if code:
+  if "noon" in src:
+   parts.append(f"🏷️ كود لقطة: {code} — خصم 10% حسب شروط نون")
+  elif "temu" in src:
+   parts.append(f"🏷️ استخدم الكود: {code} — الخصم يختلف حسب الحساب والحملة")
+  elif "shein" in src:
+   parts.append(f"🏷️ كود العرض: {code} — للمؤهلين حسب شروط SHEIN")
+  else:
+   parts.append(f"🏷️ الكود: {code}")
+ if url: parts.append(f"🔗 خذ العرض من هنا: {url}")
+ parts.append("⏳ الأسعار والعروض ممكن تتغير، تأكد من السعر النهائي قبل الدفع.")
+ parts.append("لقطة | ندور الأرخص ونجيب لك الزبدة 🎯")
  d=gs("disclosure").strip()
  if d: parts.append(d)
- parts.append("#عروض #خصومات #السعودية"); return "\n".join(parts)[:275]
+ return "\n".join(parts)[:275]
 async def publish_text(text):
  cid=gs("buffer_channel")
  if not cid:
