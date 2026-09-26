@@ -57,38 +57,60 @@ async function checkEngine(){
   try{
     const r=await fetch("/health",{cache:"no-store"});
     const j=await r.json();
-    if(j.provider_configured){
-      box.className="engine ok";
-      box.querySelector("span").textContent="AI Engine Online";
-    }else{
-      box.className="engine warn";
-      box.querySelector("span").textContent="Studio Online";
-    }
+    box.className="engine ok";
+    box.querySelector("span").textContent=j.engine||"Wan 2.2 Free Engine";
   }catch{
     box.className="engine warn";
-    box.querySelector("span").textContent="Studio Online";
+    box.querySelector("span").textContent="Engine reconnecting";
   }
 }
 checkEngine();
+
+function renderOutput(url){
+  const preview=$("#preview");
+  if(!preview)return;
+  preview.innerHTML='<video controls autoplay loop playsinline style="width:100%;height:100%;object-fit:contain;border-radius:18px;background:#050506"><source src="'+url+'" type="video/mp4"></video>';
+}
+
+async function watchJob(id){
+  const notice=$("#notice");
+  for(let i=0;i<240;i++){
+    await new Promise(r=>setTimeout(r,3000));
+    const r=await fetch("/api/jobs/"+id,{cache:"no-store"});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.detail||"Could not read render status");
+    const labels={starting:"Preparing image",connecting:"Connecting to Wan 2.2",queued:"ZeroGPU queue / rendering",completed:"Render complete",failed:"Render failed"};
+    notice.textContent=(labels[j.status]||j.status)+" · "+(j.progress||0)+"%";
+    if(j.status==="completed"){
+      renderOutput(j.output_url);
+      return;
+    }
+    if(j.status==="failed")throw new Error(j.error||"Free engine failed. Please retry.");
+  }
+  throw new Error("The free GPU queue is taking too long. Retry in a moment.");
+}
 
 $("#generate").addEventListener("click",async()=>{
   const f=new FormData();
   f.append("mode",mode);
   f.append("prompt",prompt.value);
-  f.append("duration",$("#duration").value);
+  f.append("duration",Math.min(Number($("#duration").value),5));
   f.append("identity_strength",$("#identity").value);
   if($("#source").files[0])f.append("source",$("#source").files[0]);
   if($("#reference").files[0])f.append("reference",$("#reference").files[0]);
 
   const notice=$("#notice");
-  notice.textContent="Creating project...";
+  if(mode==="image-to-video"&&!$("#source").files[0]){
+    notice.textContent="Upload an image first.";
+    return;
+  }
+  notice.textContent="Submitting to Wan 2.2 Free Engine...";
   try{
     const r=await fetch("/api/jobs",{method:"POST",body:f});
     const j=await r.json();
-    if(!r.ok) throw new Error(j.detail||"Could not create project");
-    notice.textContent=j.status==="provider_required"
-      ? "Project uploaded. The cloud AI rendering engine still needs to be connected."
-      : "Project queued successfully · "+j.id;
+    if(!r.ok)throw new Error(j.detail||"Could not start render");
+    notice.textContent="Render started · "+j.id;
+    await watchJob(j.id);
   }catch(e){
     notice.textContent="Error · "+e.message;
   }
