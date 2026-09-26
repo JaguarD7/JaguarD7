@@ -450,38 +450,6 @@ async def cleanup_invalid(r:Request):
   deleted.append({"id":p.get("id"),"result":res.get("deletePost")})
  return {"ok":1,"deleted":deleted}
 
-@app.post("/api/repair-noon-9c7e13")
-async def repair_noon_once():
- bad=("Honor Choice Clip 2 Pro","RIF 33","UGREEN USB-C 100W","باور بانك Joy","لطافة خمرة","ماوس ألعاب لاسلكي X11","سماعة أنكر بلوتوث")
- c=con()
- rows=c.execute("select id,title from offers where source='noon' and status='new'").fetchall()
- rejected=0
- for row in rows:
-  if any(x in str(row["title"]) for x in bad):
-   c.execute("update offers set status='rejected' where id=?",(row["id"],)); rejected+=1
- c.commit(); c.close()
- try:
-  org=gs("buffer_org"); cid=gs("buffer_channel")
-  if not org or not cid:
-   await discover(); org=gs("buffer_org"); cid=gs("buffer_channel")
-  q="""query Recent($orgId: OrganizationId!, $channelIds: [ChannelId!]) {
-    posts(first: 50, input: {organizationId:$orgId, sort:[{field:createdAt,direction:desc}], filter:{status:[sent], channelIds:$channelIds}}) {
-      edges { node { id text createdAt channelId } }
-    }
-  }"""
-  d=await bgql(q,{"orgId":org,"channelIds":[cid]})
-  edges=((d.get("posts") or {}).get("edges") or [])
-  deleted=[]
-  for e in edges:
-   p=(e or {}).get("node") or {}; txt=str(p.get("text",""))
-   if not any(x in txt for x in bad): continue
-   dq="""mutation DeleteBad($input: DeletePostInput!) { deletePost(input:$input) { __typename ... on MutationError { message } } }"""
-   res=await bgql(dq,{"input":{"id":p.get("id")}})
-   deleted.append({"id":p.get("id"),"result":res.get("deletePost")})
-  return {"ok":1,"rejected":rejected,"deleted":deleted}
- except Exception as e:
-  return {"ok":0,"rejected":rejected,"error":str(e)}
-
 @app.get("/api/activity")
 async def activity(r:Request):
  auth(r); c=con(); a=[dict(x) for x in c.execute("select * from activity order by id desc limit 80")]; c.close(); return a
