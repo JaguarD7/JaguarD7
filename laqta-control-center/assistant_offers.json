@@ -1,97 +1,6 @@
 {
-  "generated_at": "2026-09-26T13:45:02.691Z",
+  "generated_at": "2026-09-26T14:11:27.590Z",
   "offers": [
-    {
-      "title": "ماوس ألعاب لاسلكي X11 مع قاعدة شحن RGB ودقة 22000 DPI",
-      "current_price": "106.46 ر.س",
-      "old_price": "179 ر.س",
-      "code": "LQSA",
-      "url": "https://s.noon.com/kXLee9Y0nLs",
-      "source": "noon",
-      "score": 13,
-      "discount": 40,
-      "verified_at": "2026-09-26T13:45:02.691Z",
-      "source_url": "https://supermall.noon.com/saudi-ar/electronics-and-mobiles/bank-offer-sa-2/?page=2",
-      "tracking": "noon_campaign_link_plus_code"
-    },
-    {
-      "title": "سماعة أنكر بلوتوث محمولة 12W مقاومة للماء IPX7",
-      "current_price": "118.98 ر.س",
-      "old_price": "179 ر.س",
-      "code": "LQSA",
-      "url": "https://s.noon.com/kXLee9Y0nLs",
-      "source": "noon",
-      "score": 12,
-      "discount": 33,
-      "verified_at": "2026-09-26T13:45:02.691Z",
-      "source_url": "https://supermall.noon.com/saudi-ar/electronics-and-mobiles/electronics-and-mobiles-noon-rocket/?f%5Bdeal_tag%5D%5B%5D=mega-deal",
-      "tracking": "noon_campaign_link_plus_code"
-    },
-    {
-      "title": "سماعات Honor Choice Clip 2 Pro بعمر بطارية 44 ساعة",
-      "current_price": "230 ر.س",
-      "old_price": "699 ر.س",
-      "code": "LQSA",
-      "url": "https://s.noon.com/kXLee9Y0nLs",
-      "source": "noon",
-      "score": 15,
-      "discount": 67,
-      "verified_at": "2026-09-26T13:45:02.691Z",
-      "source_url": "https://supermall.noon.com/saudi-ar/electronics-and-mobiles/electronics-and-mobiles-noon-rocket/?f%5Bdeal_tag%5D%5B%5D=mega-deal",
-      "tracking": "noon_campaign_link_plus_code"
-    },
-    {
-      "title": "كيبل UGREEN USB-C 100W بطول 2 متر",
-      "current_price": "42 ر.س",
-      "old_price": "89 ر.س",
-      "code": "LQSA",
-      "url": "https://s.noon.com/kXLee9Y0nLs",
-      "source": "noon",
-      "score": 14,
-      "discount": 52,
-      "verified_at": "2026-09-26T13:45:02.691Z",
-      "source_url": "https://supermall.noon.com/saudi-ar/electronics-and-mobiles/electronics-and-mobiles-noon-rocket/?f%5Bdeal_tag%5D%5B%5D=mega-deal",
-      "tracking": "noon_campaign_link_plus_code"
-    },
-    {
-      "title": "باور بانك Joy بسعة 20,000mAh",
-      "current_price": "59 ر.س",
-      "old_price": "139 ر.س",
-      "code": "LQSA",
-      "url": "https://s.noon.com/kXLee9Y0nLs",
-      "source": "noon",
-      "score": 14,
-      "discount": 57,
-      "verified_at": "2026-09-26T13:45:02.691Z",
-      "source_url": "https://supermall.noon.com/saudi-ar/electronics-and-mobiles/electronics-and-mobiles-noon-rocket/?f%5Bdeal_tag%5D%5B%5D=mega-deal",
-      "tracking": "noon_campaign_link_plus_code"
-    },
-    {
-      "title": "عطر لطافة خمرة للجنسين 100 مل",
-      "current_price": "86.96 ر.س",
-      "old_price": "199 ر.س",
-      "code": "LQSA",
-      "url": "https://s.noon.com/kXLee9Y0nLs",
-      "source": "noon",
-      "score": 14,
-      "discount": 56,
-      "verified_at": "2026-09-26T13:45:02.691Z",
-      "source_url": "https://supermall.noon.com/saudi-ar/beauty/fragrance/beauty-rocket/?isCarouselView=false&limit=50&pageCategory=beauty%2Ffragrance&sort%5Bby%5D=popularity&sort%5Bdir%5D=desc",
-      "tracking": "noon_campaign_link_plus_code"
-    },
-    {
-      "title": "عطر RIF 33 أو دو بارفان للجنسين 100 مل",
-      "current_price": "96 ر.س",
-      "old_price": "325 ر.س",
-      "code": "LQSA",
-      "url": "https://s.noon.com/kXLee9Y0nLs",
-      "source": "noon",
-      "score": 15,
-      "discount": 70,
-      "verified_at": "2026-09-26T13:45:02.691Z",
-      "source_url": "https://supermall.noon.com/saudi-ar/beauty/fragrance/beauty-rocket/?isCarouselView=false&limit=50&pageCategory=beauty%2Ffragrance&sort%5Bby%5D=popularity&sort%5Bdir%5D=desc",
-      "tracking": "noon_campaign_link_plus_code"
-    },
     {
       "title": "ميكسر ألعاب وبث RGB مع مدخل XLR",
       "current_price": "15.03 ر.س",
@@ -101,7 +10,7 @@
       "source": "temu",
       "score": 12,
       "discount": 0,
-      "verified_at": "2026-09-26T13:45:02.691Z",
+      "verified_at": "2026-09-26T14:11:27.590Z",
       "source_url": "https://temu.to/k/eos9yxu17dw",
       "tracking": "temu_product_share_plus_code"
     }
