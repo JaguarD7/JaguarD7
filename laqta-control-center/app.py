@@ -687,15 +687,11 @@ async def one_time_force_publish():
 
 @app.get("/api/force-publish-text-a91d7")
 async def force_publish_text_a91d7():
- if gs("force_publish_text_a91d7")=="1":
-  return {"ok":1,"already":True}
- ss("force_publish_text_a91d7","1")
  try:
   added=await scan()
   msg=await publish_one(True)
   return {"ok":1,"added":added,"message":msg,"last_post":gs("last_post")}
  except Exception as e:
-  ss("force_publish_text_a91d7","0")
   return {"ok":0,"error":str(e)}
 
 @app.post("/api/pulse")
