@@ -463,9 +463,13 @@ async def publish_one(force=False):
      c.execute("update offers set status='rejected' where id=?",(cand["id"],)); c.commit()
      log("تم رفض عرض لأن الرابط لا يطابق المنتج: "+cand["title"],"error")
      continue
-    c.execute("update offers set status='publishing' where id=?",(cand["id"],)); c.commit()
     try:
      live_tags=await _relevant_live_trend_tags(cand["title"],cand["source"],2)
+     if not live_tags:
+      c.execute("update offers set status='waiting_trend' where id=?",(cand["id"],)); c.commit()
+      log("تأجيل العرض لعدم وجود ترند سعودي مناسب الآن: "+cand["title"],"info")
+      continue
+     c.execute("update offers set status='publishing' where id=?",(cand["id"],)); c.commit()
      await publish_text(compose(cand,live_tags))
     except Exception as e:
      msg=str(e)
@@ -559,7 +563,10 @@ async def import_curated():
 
 async def scan():
  added=await import_curated()
- c=con(); srcs=[dict(x) for x in c.execute("select * from sources where enabled=1")]; c.close()
+ c=con()
+ c.execute("update offers set status='new' where status='waiting_trend'")
+ c.commit()
+ srcs=[dict(x) for x in c.execute("select * from sources where enabled=1")]; c.close()
  for s in srcs:
   try:
    f=feedparser.parse(s["url"])
