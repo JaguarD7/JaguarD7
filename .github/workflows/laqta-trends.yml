@@ -1,0 +1,85 @@
+name: LAQTA Saudi Trends
+
+on:
+  schedule:
+    - cron: "3,18,33,48 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/laqta-trends.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  trends:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: laqta-feed
+          fetch-depth: 0
+      - name: Fetch Saudi Trends24 hashtags
+        run: |
+          python - <<'PY'
+          import json, re, urllib.request, html
+          from html.parser import HTMLParser
+          from datetime import datetime, timezone
+
+          URL="https://trends24.in/saudi-arabia/"
+          req=urllib.request.Request(URL,headers={
+              "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154 Safari/537.36",
+              "Accept-Language":"ar-SA,ar;q=0.9,en;q=0.7"
+          })
+          with urllib.request.urlopen(req,timeout=30) as r:
+              page=r.read().decode("utf-8","ignore")
+
+          class P(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.capture=False
+                  self.buf=[]
+                  self.tags=[]
+              def handle_starttag(self,tag,attrs):
+                  if tag!="a": return
+                  href=dict(attrs).get("href","")
+                  if re.search(r"https?://(?:twitter\.com|x\.com)/search\?q=",href,re.I):
+                      self.capture=True
+                      self.buf=[]
+              def handle_data(self,data):
+                  if self.capture: self.buf.append(data)
+              def handle_endtag(self,tag):
+                  if tag=="a" and self.capture:
+                      label=html.unescape(" ".join(self.buf))
+                      label=re.sub(r"\s+"," ",label).strip()
+                      if label.startswith("#"):
+                          item=label[1:].strip()
+                          item=re.sub(r"[^\w\u0600-\u06ff_]+","",item)
+                          if len(item)>=2 and not re.fullmatch(r"[0-9a-fA-F]{3,8}",item):
+                              t="#"+item
+                              if t not in self.tags: self.tags.append(t)
+                      self.capture=False
+                      self.buf=[]
+
+          p=P(); p.feed(page)
+          out={
+              "source":URL,
+              "generated_at":datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              "count":len(p.tags),
+              "tags":p.tags[:80]
+          }
+          path="laqta-control-center/saudi_trends.json"
+          with open(path,"w",encoding="utf-8") as f:
+              json.dump(out,f,ensure_ascii=False,indent=2)
+          print(json.dumps(out,ensure_ascii=False))
+          if not p.tags:
+              raise SystemExit("No explicit Saudi hashtags were extracted from Trends24")
+          PY
+      - name: Save trends feed
+        run: |
+          git config user.name "LAQTA Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add laqta-control-center/saudi_trends.json
+          git diff --cached --quiet || git commit -m "Update Saudi Trends24 hashtags"
+          git push origin HEAD:laqta-feed
