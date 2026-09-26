@@ -153,10 +153,133 @@ def extract_product_title(desc, fallback_title):
             return candidate[:150]
     return clean_title(fallback_title)
 
+def _num_from_price_text(s):
+    m=re.search(r"([0-9]+(?:[.,][0-9]{1,2})?)",str(s or "").replace(",",""))
+    return float(m.group(1)) if m else None
+
+def fetch_text(url, timeout=25):
+    req=urllib.request.Request(url,headers=UA)
+    with urllib.request.urlopen(req,timeout=timeout) as r:
+        return r.read().decode("utf-8","ignore")
+
+def amazon_direct_deals(now):
+    out=[]
+    try:
+        s=fetch_text("https://www.amazon.sa/deals",30)
+    except Exception:
+        return out
+    seen=set()
+    for m in re.finditer(r'href=["\\\']([^"\\\']*/dp/([A-Z0-9]{10})[^"\\\']*)',s,re.I):
+        href,asin=m.group(1),m.group(2).upper()
+        if asin in seen: continue
+        seen.add(asin)
+        slug=href.split("/dp/")[0].rsplit("/",1)[-1]
+        title=urllib.parse.unquote(slug).replace("-"," ").strip()
+        if len(title)<8: title=f"عرض Amazon {asin}"
+        start=s.rfind('<div class="a-cardui dcl-product"',0,m.start())
+        if start<0: start=max(0,m.start()-1800)
+        end=s.find('<div class="a-cardui dcl-product"',m.end())
+        if end<0: end=min(len(s),m.end()+3500)
+        card=txt(s[start:end])
+        dm=re.search(r"خصم\s*(\d{1,2})%",card)
+        if not dm: dm=re.search(r"(\d{1,2})%\s*خصم",card)
+        d=int(dm.group(1)) if dm else 0
+        vals=[]
+        for x in re.findall(r"([0-9][0-9,.]*)\s*ريال",card):
+            try: vals.append(float(x.replace(",","")))
+            except: pass
+        vals=[v for v in vals if 0.5<=v<=100000]
+        cur=""; old=""
+        if vals:
+            curv=min(vals[:8]); oldv=max(vals[:8])
+            cur=f"{curv:g} ر.س"
+            if oldv>curv*1.02: old=f"{oldv:g} ر.س"
+        if d<8 and not cur: continue
+        scorev=8+(4 if d>=30 else 2 if d>=15 else 0)+(1 if "عرض" in card else 0)
+        out.append({
+            "title":title[:150],
+            "current_price":cur,
+            "old_price":old,
+            "code":"",
+            "url":f"https://www.amazon.sa/dp/{asin}/ref=nosim?tag=laqtasa06-21",
+            "source":"amazon",
+            "score":scorev,
+            "discount":d,
+            "verified_at":now,
+            "source_url":"https://www.amazon.sa"+html.unescape(href.split("?")[0]),
+            "tracking":"amazon_tag"
+        })
+        if len(out)>=7: break
+    return out
+
+def temu_direct_deals(now):
+    out=[]
+    try:
+        s=fetch_text("https://www.temu.com/sa/",30)
+    except Exception:
+        return out
+    bad=("sex","dildo","vibrator","adult toy","جنسي","للبالغين فقط","إباحية")
+    seen=set()
+    for m in re.finditer(r'"goodsId":"(\d+)","goodsName":"((?:\\.|[^"])*)"',s,re.S):
+        gid,name_raw=m.group(1),m.group(2)
+        if gid in seen: continue
+        seen.add(gid)
+        name=name_raw.replace("\\u002F","/").replace("\\u0026","&").replace("\\"","\"")
+        if any(k.lower() in name.lower() for k in bad): continue
+        chunk=s[m.start():m.start()+7000]
+        currency=re.search(r'"currency":"([^"]+)"',chunk)
+        p=re.search(r'"priceStr":"((?:\\.|[^"])*)"',chunk)
+        mp=re.search(r'"marketPriceStr":"((?:\\.|[^"])*)"',chunk)
+        sales=re.search(r'"salesTip":"((?:\\.|[^"])*)"',chunk)
+        if not currency or currency.group(1)!="SAR" or not p: continue
+        price=p.group(1).replace("\\u061c","").replace("\\u002F","/")
+        market=(mp.group(1).replace("\\u061c","").replace("\\u002F","/") if mp else "")
+        pv=_num_from_price_text(price); mv=_num_from_price_text(market)
+        d=round((mv-pv)/mv*100) if pv and mv and mv>pv else 0
+        scorev=8+(4 if d>=40 else 3 if d>=25 else 1 if d>=10 else 0)
+        st=sales.group(1) if sales else ""
+        if re.search(r"[Kk]\+?\s*sold|ألف",st): scorev+=2
+        out.append({
+            "title":name[:150],
+            "current_price":price,
+            "old_price":market if mv and pv and mv>pv else "",
+            "code":"alr408026",
+            "url":"https://temu.to/k/e76r9skmde8",
+            "source":"temu",
+            "score":scorev,
+            "discount":d,
+            "verified_at":now,
+            "source_url":f"https://www.temu.com/sa/product-g-{gid}.html",
+            "tracking":"campaign_link_plus_code"
+        })
+        if len(out)>=7: break
+    return out
+
+def load_assistant_offers(now):
+    path="laqta-control-center/assistant_offers.json"
+    try:
+        with open(path,"r",encoding="utf-8") as f:
+            data=json.load(f)
+        out=[]
+        for x in data.get("offers",[]):
+            if not x.get("title") or not x.get("url"): continue
+            x=dict(x)
+            x.setdefault("verified_at",now)
+            x.setdefault("score",9)
+            x.setdefault("discount",0)
+            x.setdefault("tracking","assistant_verified")
+            out.append(x)
+        return out[:20]
+    except Exception:
+        return []
+
 def build():
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     slot = datetime.now(timezone.utc).hour // 4
     candidates = []
+    candidates.extend(amazon_direct_deals(now))
+    candidates.extend(temu_direct_deals(now))
+    candidates.extend(load_assistant_offers(now))
 
     for store, cfg in STORES.items():
         q = cfg["queries"][slot % len(cfg["queries"])]
@@ -270,19 +393,7 @@ def build():
 
     return {"generated_at": now, "offers": out}
 
-def probe_sources():
-    try:
-        u="https://www.temu.com/sa/"
-        req=urllib.request.Request(u,headers=UA)
-        with urllib.request.urlopen(req,timeout=25) as r:
-            s=r.read().decode("utf-8","ignore")
-        m=re.search(r'"goodsId":"([^"]+)","goodsName":"([^"]+)".{0,800}?"priceInfo":\{[^}]*?"currency":"([^"]+)"[^}]*?"priceStr":"([^"]+)"[^}]*?"marketPriceStr":"([^"]+)"',s,re.S)
-        print("TEMU_SA",m.groups() if m else "NO_MATCH")
-    except Exception as e:
-        print("TEMU_SA_FAIL",repr(e))
-
 if __name__ == "__main__":
-    probe_sources()
     data = build()
     with open("laqta-control-center/curated_offers.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
