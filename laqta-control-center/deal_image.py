@@ -132,8 +132,10 @@ def _paste_product(canvas, product, box, rounded=True):
         contained=ImageOps.contain(product,(bg.width-30,bg.height-30),method=Image.Resampling.LANCZOS)
         px=(bg.width-contained.width)//2; py=(bg.height-contained.height)//2
         bg.alpha_composite(contained,(px,py))
-    if mask: canvas.alpha_composite(bg,(x1,y1),mask)
-    else: canvas.alpha_composite(bg,(x1,y1))
+    if mask:
+        canvas.paste(bg,(x1,y1),mask)
+    else:
+        canvas.alpha_composite(bg,(x1,y1))
 
 def _draw_price(draw, x, y, cp, old, pct, gold, white, muted, red, compact=False):
     if pct is not None:
