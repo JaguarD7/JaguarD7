@@ -271,22 +271,15 @@ def build():
     return {"generated_at": now, "offers": out}
 
 def probe_sources():
-    tests=[
-        ("shein","https://ar.shein.com/sale/"),
-        ("temu","https://www.temu.com/")
-    ]
-    for name,u in tests:
-        try:
-            req=urllib.request.Request(u,headers=UA)
-            with urllib.request.urlopen(req,timeout=25) as r:
-                s=r.read().decode("utf-8","ignore")
-            key="goods_id" if name=="shein" else "goodsName"
-            pos=s.find(key)
-            print("PROBE",name,len(s),"POS",pos)
-            if pos>=0:
-                print(name.upper()+"_SNIP",s[max(0,pos-500):pos+1800].replace("\n"," ")[:2300])
-        except Exception as e:
-            print("PROBE_FAIL",name,repr(e))
+    try:
+        u="https://www.temu.com/sa/"
+        req=urllib.request.Request(u,headers=UA)
+        with urllib.request.urlopen(req,timeout=25) as r:
+            s=r.read().decode("utf-8","ignore")
+        m=re.search(r'"goodsId":"([^"]+)","goodsName":"([^"]+)".{0,800}?"priceInfo":\{[^}]*?"currency":"([^"]+)"[^}]*?"priceStr":"([^"]+)"[^}]*?"marketPriceStr":"([^"]+)"',s,re.S)
+        print("TEMU_SA",m.groups() if m else "NO_MATCH")
+    except Exception as e:
+        print("TEMU_SA_FAIL",repr(e))
 
 if __name__ == "__main__":
     probe_sources()
