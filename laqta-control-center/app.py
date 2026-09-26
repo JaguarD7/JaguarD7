@@ -295,8 +295,8 @@ async def _live_saudi_trends():
   # Accept ONLY X's own trend-click search links. Never scan raw HTML for '#...'
   # because CSS colors such as #fff are not trends.
   links=[]
-  links.extend(re.findall(r'href=["\\']([^"\\']*?/search\\?[^"\\']+)["\\']',page,re.I))
-  links.extend(re.findall(r'["\\']url["\\']\\s*:\\s*["\\']([^"\\']*?/search\\?[^"\\']+)["\\']',page,re.I))
+  links.extend(re.findall(r"href=[\\\"']([^\\\"']*?/search\\?[^\\\"']+)[\\\"']",page,re.I))
+  links.extend(re.findall(r"[\\\"']url[\\\"']\\s*:\\s*[\\\"']([^\\\"']*?/search\\?[^\\\"']+)[\\\"']",page,re.I))
   tags=[]
   for href in links:
    try:
