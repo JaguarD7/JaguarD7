@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 BASE=Path(__file__).resolve().parent
 DB=BASE/"laqta.db"; SEC=BASE/".laqta_secret"; TZ=ZoneInfo("Asia/Riyadh")
-CURATED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/main/laqta-control-center/curated_offers.json"
+CURATED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/curated_offers.json"
 CRON_TOKEN=os.getenv("LAQTA_CRON_TOKEN","")
 if not SEC.exists(): SEC.write_bytes(secrets.token_bytes(32))
 RAW=SEC.read_bytes(); CIPHER=Fernet(base64.urlsafe_b64encode(hashlib.sha256(RAW).digest()))
@@ -38,7 +38,7 @@ def init():
   cols=[r["name"] for r in c.execute("pragma table_info(offers)").fetchall()]
   if "score" not in cols: c.execute("alter table offers add column score integer default 0")
  except: pass
- defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","automation":"0","interval":"120","max_day":"8","mode":"queue","start":"08:00","end":"23:30","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","brand":"لقطة | LAQTA"}
+ defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","automation":"0","interval":"120","max_day":"8","mode":"queue","start":"08:00","end":"23:30","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
 class Pwd(BaseModel): password:str
@@ -259,6 +259,32 @@ async def scan():
  log(f"فحص المصادر: تمت إضافة {added} عناصر"); return added
 @app.post("/api/scan")
 async def scanapi(r:Request): auth(r); return {"ok":1,"added":await scan()}
+
+@app.post("/api/pulse")
+async def public_pulse():
+ now=datetime.now(TZ)
+ last=gs("pulse_last")
+ if last:
+  try:
+   if (now-datetime.fromisoformat(last)).total_seconds()<2700:
+    return {"ok":1,"skipped":"rate_limited"}
+  except: pass
+ ss("pulse_last",now.isoformat(timespec="seconds"))
+ if gs("automation")!="1":
+  return {"ok":1,"running":False}
+ hm=now.strftime("%H:%M")
+ if not (gs("start")<=hm<=gs("end")):
+  return {"ok":1,"running":True,"window":False}
+ added=await scan()
+ last_post=gs("last_post"); due=True
+ if last_post:
+  try: due=(now-datetime.fromisoformat(last_post)).total_seconds()>=int(gs("interval"))*60
+  except: pass
+ msg="ليس موعد النشر بعد"
+ if due:
+  try: msg=await publish_one()
+  except Exception as e: log("Pulse publish: "+str(e),"error"); msg=str(e)
+ return {"ok":1,"running":True,"added":added,"message":msg}
 
 @app.post("/api/cron")
 async def cron_tick(r:Request):
