@@ -1,6 +1,32 @@
 {
-  "generated_at": "2026-09-26T14:11:27.590Z",
+  "generated_at": "2026-09-26T14:17:35.992Z",
   "offers": [
+    {
+      "title": "MIBRU فلاتر قهوة V60 عدد 100 مقاس 01",
+      "current_price": "19.95 ر.س",
+      "old_price": "39 ر.س",
+      "code": "LQSA",
+      "url": "https://supermall.noon.com/saudi-en/coffee-filters-v60-cone-paper-white-natural-100pcs-1-2-cups-size-01/Z6D1792826D11C3DB6084Z/p/?o=a79ff247ac68b7db",
+      "source": "noon",
+      "score": 15,
+      "discount": 48,
+      "verified_at": "2026-09-26T14:17:35.992Z",
+      "source_url": "https://supermall.noon.com/saudi-en/coffee-filters-v60-cone-paper-white-natural-100pcs-1-2-cups-size-01/Z6D1792826D11C3DB6084Z/p/?o=a79ff247ac68b7db",
+      "tracking": "exact_product_plus_code"
+    },
+    {
+      "title": "Sunhome طقم أدوات مائدة ستانلس ستيل 30 قطعة",
+      "current_price": "69 ر.س",
+      "old_price": "105 ر.س",
+      "code": "LQSA",
+      "url": "https://supermall.noon.com/saudi-en/30-piece-stainless-steel-cutlery-set-silver-24-9-7-85-5-2-centimeter/Z48C63695B180FCDA48EFZ/p/?o=bab3559eeca6424c",
+      "source": "noon",
+      "score": 13,
+      "discount": 34,
+      "verified_at": "2026-09-26T14:17:35.992Z",
+      "source_url": "https://supermall.noon.com/saudi-en/30-piece-stainless-steel-cutlery-set-silver-24-9-7-85-5-2-centimeter/Z48C63695B180FCDA48EFZ/p/?o=bab3559eeca6424c",
+      "tracking": "exact_product_plus_code"
+    },
     {
       "title": "ميكسر ألعاب وبث RGB مع مدخل XLR",
       "current_price": "15.03 ر.س",
@@ -10,7 +36,7 @@
       "source": "temu",
       "score": 12,
       "discount": 0,
-      "verified_at": "2026-09-26T14:11:27.590Z",
+      "verified_at": "2026-09-26T14:17:35.992Z",
       "source_url": "https://temu.to/k/eos9yxu17dw",
       "tracking": "temu_product_share_plus_code"
     }
