@@ -178,6 +178,32 @@ def _money(v):
  m=re.search(r"\d+(?:\.\d+)?",s)
  return float(m.group()) if m else None
 
+GENERIC_NOON="https://s.noon.com/kXLee9Y0nLs"
+GENERIC_TEMU="https://temu.to/k/e76r9skmde8"
+GENERIC_SHEIN="https://onelink.shein.com/54/637r0pw8u2hc"
+
+def offer_is_safe(o):
+ src=str(o["source"] or "").lower()
+ url=str(o["url"] or "").strip()
+ title=str(o["title"] or "").strip()
+ cp=str(o["current_price"] or "").strip()
+ code=str(o["code"] or "").strip()
+ if "amazon" in src:
+  return "amazon.sa/dp/" in url and "tag=laqtasa06-21" in url
+ if "noon" in src:
+  if url==GENERIC_NOON:
+   return title.startswith("عروض نون") and not cp
+  return "noon.com" in url and ("/p/" in url or "/product" in url) and code=="LQSA"
+ if "temu" in src:
+  if url==GENERIC_TEMU:
+   return title.startswith("عروض Temu") and not cp
+  return ("temu.to/k/" in url or "temu.com" in url) and code=="alr408026"
+ if "shein" in src:
+  if url==GENERIC_SHEIN:
+   return title.startswith("اختيارات SHEIN") and not cp
+  return "shein." in url and "-p-" in url and code=="US3RU32"
+ return url.startswith("http")
+
 def _hashtags(title,src):
  s=(title+" "+src).lower()
  tags=["#عروض_السعودية"]
@@ -259,10 +285,21 @@ async def publish_text(text):
 async def publish_one(force=False):
  now=datetime.now(TZ); day=now.date().isoformat(); c=con(); n=c.execute("select posts from counters where day=?",(day,)).fetchone(); used=n["posts"] if n else 0
  if not force and used>=int(gs("max_day")): c.close(); return "وصل الحد اليومي"
- o=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
- if not o: c.close(); return "لا توجد عروض جاهزة"
+ o=None
+ while True:
+  cand=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
+  if not cand: break
+  if offer_is_safe(cand):
+   o=cand; break
+  c.execute("update offers set status='rejected' where id=?",(cand["id"],)); c.commit()
+  log("تم رفض عرض لأن الرابط لا يطابق المنتج: "+cand["title"],"error")
+ if not o: c.close(); return "لا توجد عروض موثقة جاهزة"
  try:
-  await publish_text(compose(o)); t=now.isoformat(timespec="seconds"); c.execute("update offers set status='posted',posted_at=? where id=?",(t,o["id"])); c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,)); c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(offer_fp(o["source"],o["url"],o["title"]),t)); c.commit(); ss("last_post",t); log("تم إرسال عرض إلى Buffer: "+o["title"]); return "تم"
+  sent=await publish_text(compose(o)); t=now.isoformat(timespec="seconds")
+  c.execute("update offers set status='posted',posted_at=? where id=?",(t,o["id"]))
+  c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,))
+  c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(offer_fp(o["source"],o["url"],o["title"]),t))
+  c.commit(); ss("last_post",t); log("تم إرسال عرض موثق إلى Buffer: "+o["title"]); return "تم"
  finally:c.close()
 @app.post("/api/start")
 async def start(r:Request):
@@ -388,6 +425,31 @@ async def cron_tick(r:Request):
   try: msg=await publish_one()
   except Exception as e: log("Cron publish: "+str(e),"error"); msg=str(e)
  return {"ok":1,"running":True,"added":added,"message":msg}
+@app.post("/api/cleanup-invalid")
+async def cleanup_invalid(r:Request):
+ token=r.headers.get("X-Cron-Token","")
+ if not CRON_TOKEN or not token or not secrets.compare_digest(token,CRON_TOKEN):
+  raise HTTPException(403,"forbidden")
+ org=gs("buffer_org"); cid=gs("buffer_channel")
+ if not org or not cid:
+  await discover(); org=gs("buffer_org"); cid=gs("buffer_channel")
+ q="""query Recent($orgId: OrganizationId!, $channelIds: [ChannelId!]) {
+   posts(first: 50, input: {organizationId:$orgId, sort:[{field:createdAt,direction:desc}], filter:{status:[sent], channelIds:$channelIds}}) {
+     edges { node { id text createdAt channelId } }
+   }
+ }"""
+ d=await bgql(q,{"orgId":org,"channelIds":[cid]})
+ edges=((d.get("posts") or {}).get("edges") or [])
+ bad=("Honor Choice Clip 2 Pro","RIF 33","UGREEN USB-C 100W","باور بانك Joy","لطافة خمرة","ماوس ألعاب لاسلكي X11","سماعة أنكر بلوتوث")
+ deleted=[]
+ for e in edges:
+  p=(e or {}).get("node") or {}; txt=str(p.get("text",""))
+  if not any(x in txt for x in bad): continue
+  dq="""mutation DeleteBad($input: DeletePostInput!) { deletePost(input:$input) { __typename ... on MutationError { message } } }"""
+  res=await bgql(dq,{"input":{"id":p.get("id")}})
+  deleted.append({"id":p.get("id"),"result":res.get("deletePost")})
+ return {"ok":1,"deleted":deleted}
+
 @app.get("/api/activity")
 async def activity(r:Request):
  auth(r); c=con(); a=[dict(x) for x in c.execute("select * from activity order by id desc limit 80")]; c.close(); return a
