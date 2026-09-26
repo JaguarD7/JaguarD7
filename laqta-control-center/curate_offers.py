@@ -270,7 +270,23 @@ def build():
 
     return {"generated_at": now, "offers": out}
 
+def probe_sources():
+    urls = [
+        "https://supermall.noon.com/saudi-ar/electronics-and-mobiles/electronics-and-mobiles-noon-rocket/?f%5Bdeal_tag%5D%5B%5D=mega-deal",
+        "https://ar.shein.com/sale/",
+        "https://www.amazon.sa/deals"
+    ]
+    for u in urls:
+        try:
+            req = urllib.request.Request(u, headers=UA)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                raw = r.read()
+            print("PROBE", u.split("/")[2], len(raw), raw[:80])
+        except Exception as e:
+            print("PROBE_FAIL", u.split("/")[2], repr(e))
+
 if __name__ == "__main__":
+    probe_sources()
     data = build()
     with open("laqta-control-center/curated_offers.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
