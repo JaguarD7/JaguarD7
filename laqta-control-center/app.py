@@ -472,6 +472,22 @@ async def scanapi(r:Request): auth(r); return {"ok":1,"added":await scan()}
 async def public_backup():
  return {"ciphertext":build_encrypted_backup(),"updated_at":datetime.now(TZ).isoformat(timespec="seconds")}
 
+@app.get("/api/buffer-diagnostic-4e91")
+async def buffer_diagnostic_once():
+ try:
+  if not gs("buffer_channel"): await discover()
+  org=gs("buffer_org"); cid=gs("buffer_channel")
+  q="""query Recent($orgId: OrganizationId!, $channelIds: [ChannelId!]) {
+    posts(first: 10, input: {organizationId:$orgId, sort:[{field:createdAt,direction:desc}], filter:{channelIds:$channelIds}}) {
+      edges { node { id text createdAt dueAt status shareMode channelId } }
+    }
+  }"""
+  d=await bgql(q,{"orgId":org,"channelIds":[cid]})
+  edges=((d.get("posts") or {}).get("edges") or [])
+  return {"ok":1,"channel":gs("buffer_channel_name"),"posts":[(e or {}).get("node") for e in edges]}
+ except Exception as e:
+  return {"ok":0,"error":str(e)}
+
 @app.get("/api/force-publish-8c21f")
 async def one_time_force_publish():
  if gs("force_publish_8c21f")=="1":
