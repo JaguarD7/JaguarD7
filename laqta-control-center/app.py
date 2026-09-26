@@ -82,7 +82,7 @@ def init():
   if "score" not in cols: c.execute("alter table offers add column score integer default 0")
   if "tags" not in cols: c.execute("alter table offers add column tags text default ''")
  except: pass
- defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"60","max_day":"24","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
+ defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"30","max_day":"48","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
 class Pwd(BaseModel): password:str
@@ -95,8 +95,8 @@ class Source(BaseModel): name:str; url:str
 async def up():
  init()
  await restore_backup()
- # LAQTA always-on policy requested by owner: one offer every hour, 24/day.
- ss("interval","60"); ss("max_day","24"); ss("mode","now"); ss("start","00:00"); ss("end","23:59")
+ # LAQTA always-on policy requested by owner: one verified offer every 30 minutes, up to 48/day.
+ ss("interval","30"); ss("max_day","48"); ss("mode","now"); ss("start","00:00"); ss("end","23:59")
  if gs("buffer_key") and gs("buffer_channel"):
   ss("automation","1")
  asyncio.create_task(loop())
