@@ -79,11 +79,15 @@ async function watchJob(id){
     const r=await fetch("/api/jobs/"+id,{cache:"no-store"});
     const j=await r.json();
     if(!r.ok)throw new Error(j.detail||"Could not read render status");
-    const labels={starting:"Preparing image",connecting:"Connecting to Wan 2.2",queued:"ZeroGPU queue / rendering",completed:"Render complete",failed:"Render failed"};
+    const labels={starting:"Preparing image",connecting:"Connecting to Wan 2.2",queued:"ZeroGPU queue / rendering",completed:"Render complete",failed:"Render failed",waiting_capacity:"Waiting for free GPU capacity"};
     notice.textContent=(labels[j.status]||j.status)+" · "+(j.progress||0)+"%";
     if(j.directed_prompt && j.status==="queued") notice.title="ONYX Director: "+j.directed_prompt;
     if(j.status==="completed"){
       renderOutput(j.output_url);
+      return;
+    }
+    if(j.status==="waiting_capacity"){
+      notice.textContent="Free GPU capacity is exhausted for now. Your setup is working; free compute needs to reset.";
       return;
     }
     if(j.status==="failed")throw new Error(j.error||"Free engine failed. Please retry.");
