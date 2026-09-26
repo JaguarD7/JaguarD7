@@ -151,7 +151,7 @@ def init():
       c.execute("update offers set status='duplicate' where id=?",(r["id"],))
  except Exception:
   pass
- defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"30","max_day":"48","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
+ defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"15","max_day":"96","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
 class Pwd(BaseModel): password:str
@@ -164,8 +164,8 @@ class Source(BaseModel): name:str; url:str
 async def up():
  init()
  await restore_backup()
- # LAQTA always-on policy requested by owner: one verified offer every 30 minutes, up to 48/day.
- ss("interval","30"); ss("max_day","48"); ss("mode","now"); ss("start","00:00"); ss("end","23:59")
+ # LAQTA always-on policy requested by owner: one verified offer every 15 minutes, up to 96/day.
+ ss("interval","15"); ss("max_day","96"); ss("mode","now"); ss("start","00:00"); ss("end","23:59")
  if gs("buffer_key") and gs("buffer_channel"):
   ss("automation","1")
  asyncio.create_task(loop())
@@ -465,10 +465,6 @@ async def publish_one(force=False):
      continue
     try:
      live_tags=await _relevant_live_trend_tags(cand["title"],cand["source"],2)
-     if not live_tags:
-      c.execute("update offers set status='waiting_trend' where id=?",(cand["id"],)); c.commit()
-      log("تأجيل العرض لعدم وجود ترند سعودي مناسب الآن: "+cand["title"],"info")
-      continue
      c.execute("update offers set status='publishing' where id=?",(cand["id"],)); c.commit()
      await publish_text(compose(cand,live_tags))
     except Exception as e:
@@ -627,7 +623,7 @@ async def public_pulse():
  hm=now.strftime("%H:%M")
  if not (gs("start")<=hm<=gs("end")):
   return {"ok":1,"running":True,"window":False}
- # A public wake call can never accelerate publishing beyond the configured hourly interval.
+ # A public wake call can never accelerate publishing beyond the configured interval.
  last_post=gs("last_post"); due=True
  if last_post:
   try: due=(now-datetime.fromisoformat(last_post)).total_seconds()>=int(gs("interval"))*60
