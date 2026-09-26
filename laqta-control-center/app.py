@@ -205,56 +205,63 @@ def offer_is_safe(o):
   return "shein." in url and "-p-" in url and code=="US3RU32"
  return url.startswith("http")
 
-def _hashtags(title,src):
- s=(title+" "+src).lower()
- tags=["#عروض_السعودية"]
- if "noon" in src: tags.append("#نون")
- elif "temu" in src: tags.append("#تيمو")
- elif "shein" in src: tags.append("#شي_إن")
- elif "amazon" in src: tags.append("#امازون_السعودية")
- if any(k in s for k in ("عطر","عطور","fragrance","perfume")): tags.append("#عطور")
- elif any(k in s for k in ("سماعة","سماعات","ماوس","كيبل","تابلت","هاتف","جوال","شاحن","باور","gaming","rgb")): tags.append("#تقنية")
- elif any(k in s for k in ("مطبخ","منزل","رف","كرسي","أثاث")): tags.append("#المنزل")
- elif any(k in s for k in ("ملابس","حذاء","أحذية","شنط","ساعة","ساعات")): tags.append("#تسوق")
- else: tags.append("#خصومات")
- return " ".join(tags[:3])
+def _hashtags(title,src,raw=""):
+ tags=[]
+ for x in re.findall(r"#[^\s#]+",str(raw or "")):
+  if x not in tags: tags.append(x)
+ if not tags:
+  s=(title+" "+src).lower()
+  if "ايفون" in s or "iphone" in s: tags=["#ايفون","#عروض_السعودية"]
+  elif "قهوة" in s or "v60" in s or "coffee" in s: tags=["#قهوة","#عروض_السعودية"]
+  elif "عطر" in s or "perfume" in s or "fragrance" in s: tags=["#عطور","#عروض_السعودية"]
+  elif any(k in s for k in ("سماعة","ماوس","كيبل","تابلت","شاحن","باور","gaming","rgb")): tags=["#تقنية","#عروض_السعودية"]
+  else: tags=["#عروض_السعودية"]
+ return " ".join(tags[:2])
 
 def compose(o):
  title=re.sub(r"\s+"," ",o["title"].strip())
- if len(title)>78: title=title[:75].rstrip()+"..."
+ if len(title)>82: title=title[:79].rstrip()+"..."
  cp=o["current_price"].strip(); oldp=o["old_price"].strip(); code=o["code"].strip(); url=o["url"].strip()
  src=(o["source"] or "").lower()
  now=_money(cp); before=_money(oldp)
- hooks={
-  "noon":["🔥 لقطة نون","⚡ عرض نون","🎯 لقطة اليوم من نون"],
-  "temu":["🔥 لقطة Temu","😮‍💨 سعر Temu","⚡ لقطة Temu"],
-  "shein":["🔥 لقطة SHEIN","✨ عرض SHEIN","⚡ لقطة SHEIN"],
-  "amazon":["🔥 لقطة Amazon","🎯 عرض Amazon","⚡ سعر Amazon"]
- }
- arr=next((v for k,v in hooks.items() if k in src),["🔥 لقطة اليوم","⚡ عرض قوي","🎯 لقطة"])
- parts=[arr[(sum(map(ord,title))+len(url))%len(arr)],title]
- if now is not None and before is not None and before>now:
-  pct=round((before-now)/before*100); parts.append(f"💸 {cp} بدل {oldp} — خصم {pct}%")
- elif cp:
-  parts.append(f"💸 {cp}")
+ pct=round((before-now)/before*100) if now is not None and before is not None and before>now else None
+ try: raw_tags=(o["tags"] or "").strip()
+ except: raw_tags=""
+ tags=_hashtags(title,src,raw_tags)
+ store="نون" if "noon" in src else "Amazon" if "amazon" in src else "Temu" if "temu" in src else "SHEIN" if "shein" in src else ""
+ seed=(sum(map(ord,title))+len(url))%5
+ if pct is not None:
+  variants=[
+   [f"لقيت هذا السعر على {store} 👀" if store else "لقيت هذا السعر 👀",title,f"{cp} بدل {oldp} — خصم {pct}%"],
+   ["هذا العرض يستاهل تشوفه 👇",title,f"السعر الآن {cp} بدل {oldp}"],
+   [title,f"نازل إلى {cp} بدل {oldp} 👀"],
+   [f"للي كان ينتظر سعر أفضل لـ {title}",f"{cp} بدل {oldp} — خصم {pct}%"],
+   [title,f"خصم {pct}% — صار {cp} بدل {oldp}"]
+  ]
+ else:
+  variants=[
+   [f"لقيت هذا على {store} 👀" if store else "لقيت هذا 👀",title,f"السعر {cp}" if cp else ""],
+   ["هذا شدني اليوم 👇",title,f"{cp}" if cp else ""],
+   [title,f"السعر الحالي {cp}" if cp else ""],
+   [f"إذا كنت تدور {title}، هذا العرض موجود الآن",f"{cp}" if cp else ""],
+   [title,f"لقيته بهذا السعر: {cp}" if cp else ""]
+  ]
+ parts=[x for x in variants[seed] if x]
  if code:
-  if "noon" in src: parts.append(f"🏷️ {code} | حسب شروط نون")
-  elif "temu" in src: parts.append(f"🏷️ {code} | حسب الأهلية")
-  elif "shein" in src: parts.append(f"🏷️ {code} | حسب الأهلية")
-  else: parts.append(f"🏷️ {code}")
- if url: parts.append(f"👇 {url}")
- try:
-  trend_tags=(o["tags"] or "").strip()
- except:
-  trend_tags=""
- parts.append(trend_tags or _hashtags(title,src))
+  if "noon" in src: parts.append(f"كود: {code} — حسب شروط نون")
+  elif "temu" in src: parts.append(f"كود: {code} — حسب الأهلية")
+  elif "shein" in src: parts.append(f"كود: {code} — حسب الأهلية")
+  else: parts.append(f"كود: {code}")
+ if url: parts.append(url)
+ if tags: parts.append(tags)
+ parts.append("رابط عمولة")
  text="\n".join(parts)
  if len(text)>278:
-  # Never cut the link or hashtags; shorten only the product title.
-  short=title[:48].rstrip()+"..."
-  parts[1]=short
+  short=title[:50].rstrip()+"..."
+  parts=[short if x==title else x for x in parts]
   text="\n".join(parts)
  return text[:278]
+
 async def publish_text(text):
  if not gs("buffer_channel"):
   await discover()
