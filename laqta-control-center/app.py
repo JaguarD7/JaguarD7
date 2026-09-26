@@ -65,12 +65,30 @@ def canonical_offer_key(source,url,title=""):
 def offer_fp(source,url,title):
  return hashlib.sha256(canonical_offer_key(source,url,title).encode("utf-8","ignore")).hexdigest()
 
+PRODUCT_STOP={"with","and","the","for","from","version","middle","east","facetime","black","white","blue","green","silver","gold","نسخة","الشرق","الأوسط","مع","لون","اسود","أسود","ابيض","أبيض","فضي","ذهبي"}
+def product_key(title):
+ t=str(title or "").lower()
+ t=re.sub(r"[^a-z0-9\u0600-\u06ff]+"," ",t)
+ toks=[x for x in t.split() if len(x)>=2 and x not in PRODUCT_STOP]
+ # Keep stable identifying words/model numbers; ignore presentation wording.
+ sig=" ".join(toks[:14])
+ return hashlib.sha256(sig.encode("utf-8","ignore")).hexdigest() if sig else ""
+
+PERMA_BLOCK_IDS={"N70105548V"}
+def permanently_blocked(source,url,title):
+ u=str(url or "").upper(); t=str(title or "").lower()
+ if any(x in u for x in PERMA_BLOCK_IDS): return True
+ # This exact iPhone offer has already been posted repeatedly; never enqueue it again.
+ if "iphone 16" in t and "128gb" in t: return True
+ return False
+
 def build_encrypted_backup():
  c=con()
  history=[dict(x) for x in c.execute("select fingerprint,posted_at from history order by posted_at desc limit 1000")]
+ products=[dict(x) for x in c.execute("select product_key,fingerprint,title,posted_at from product_history order by posted_at desc limit 3000")]
  counters=[dict(x) for x in c.execute("select day,posts from counters order by day desc limit 60")]
  c.close()
- payload={"settings":{k:gs(k,"") for k in BACKUP_KEYS},"history":history,"counters":counters}
+ payload={"settings":{k:gs(k,"") for k in BACKUP_KEYS},"history":history,"products":products,"counters":counters}
  raw=json.dumps(payload,ensure_ascii=False,separators=(",",":")).encode()
  return CIPHER.encrypt(raw).decode()
 
@@ -89,6 +107,9 @@ async def restore_backup():
   for h in payload.get("history",[]):
    if h.get("fingerprint"):
     c.execute("insert or ignore into history(fingerprint,posted_at) values(?,?)",(h["fingerprint"],h.get("posted_at","")))
+  for p in payload.get("products",[]):
+   if p.get("product_key"):
+    c.execute("insert or ignore into product_history(product_key,fingerprint,title,posted_at) values(?,?,?,?)",(p["product_key"],p.get("fingerprint",""),p.get("title",""),p.get("posted_at","")))
   for n in payload.get("counters",[]):
    if n.get("day"):
     c.execute("insert into counters(day,posts) values(?,?) on conflict(day) do update set posts=excluded.posts",(n["day"],int(n.get("posts",0))))
@@ -97,7 +118,7 @@ async def restore_backup():
  except Exception:
   return False
 def init():
- c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '',score integer default 0,tags text default '');create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);create table if not exists history(fingerprint text primary key,posted_at text);""")
+ c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '',score integer default 0,tags text default '');create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);create table if not exists history(fingerprint text primary key,posted_at text);create table if not exists product_history(product_key text primary key,fingerprint text,title text,posted_at text);""")
  try:
   cols=[r["name"] for r in c.execute("pragma table_info(offers)").fetchall()]
   if "score" not in cols: c.execute("alter table offers add column score integer default 0")
@@ -112,8 +133,13 @@ def init():
    if not r["fingerprint_key"]:
     c.execute("update offers set fingerprint_key=? where id=?",(fp,r["id"]))
    groups.setdefault(fp,[]).append(r)
+   if permanently_blocked(r["source"],r["url"],r["title"]) and r["status"]!="posted":
+    c.execute("update offers set status='duplicate' where id=?",(r["id"],))
    if r["status"]=="posted":
-    c.execute("insert or ignore into history(fingerprint,posted_at) values(?,?)",(fp,r["posted_at"] or datetime.now(TZ).isoformat(timespec="seconds")))
+    ts=r["posted_at"] or datetime.now(TZ).isoformat(timespec="seconds")
+    c.execute("insert or ignore into history(fingerprint,posted_at) values(?,?)",(fp,ts))
+    pk=product_key(r["title"])
+    if pk: c.execute("insert or ignore into product_history(product_key,fingerprint,title,posted_at) values(?,?,?,?)",(pk,fp,r["title"],ts))
   for fp,items in groups.items():
    posted=[r for r in items if r["status"]=="posted"]
    if posted:
@@ -232,6 +258,7 @@ def offer_is_safe(o):
  src=str(o["source"] or "").lower()
  url=str(o["url"] or "").strip()
  title=str(o["title"] or "").strip()
+ if permanently_blocked(src,url,title): return False
  cp=str(o["current_price"] or "").strip()
  code=str(o["code"] or "").strip()
  if "amazon" in src:
@@ -376,7 +403,10 @@ async def publish_one(force=False):
     cand=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
     if not cand: return "لا توجد عروض موثقة جاهزة"
     fp=cand["fingerprint_key"] or offer_fp(cand["source"],cand["url"],cand["title"])
+    pk=product_key(cand["title"])
     already=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
+    if not already and pk:
+     already=c.execute("select 1 from product_history where product_key=?",(pk,)).fetchone()
     if not already:
      already=c.execute("select 1 from offers where fingerprint_key=? and status='posted' and id<>?",(fp,cand["id"])).fetchone()
     if already:
@@ -400,7 +430,9 @@ async def publish_one(force=False):
      msg=str(e)
      if "already got this one scheduled or posted" in msg.lower() or "same thing twice" in msg.lower():
       c.execute("update offers set status='duplicate' where id=?",(cand["id"],))
-      c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(fp,now.isoformat(timespec="seconds")))
+      ts=now.isoformat(timespec="seconds")
+      c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(fp,ts))
+      if pk: c.execute("insert or replace into product_history(product_key,fingerprint,title,posted_at) values(?,?,?,?)",(pk,fp,cand["title"],ts))
       c.commit()
       log("تجاوزت عرض مكرر في Buffer: "+cand["title"],"info")
       continue
@@ -410,6 +442,7 @@ async def publish_one(force=False):
     c.execute("update offers set status='posted',posted_at=? where id=?",(t,cand["id"]))
     c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,))
     c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(fp,t))
+    if pk: c.execute("insert or replace into product_history(product_key,fingerprint,title,posted_at) values(?,?,?,?)",(pk,fp,cand["title"],t))
     c.commit(); ss("last_post",t); log("تم إرسال عرض موثق إلى Buffer: "+cand["title"]); return "تم"
   finally:
    c.close()
@@ -436,8 +469,9 @@ async def offers(r:Request):
 @app.post("/api/offers")
 async def addoffer(p:Offer,r:Request):
  auth(r)
- fp=offer_fp(p.source,p.url,p.title); c=con()
- if c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone() or c.execute("select 1 from offers where fingerprint_key=?",(fp,)).fetchone():
+ if permanently_blocked(p.source,p.url,p.title): return {"ok":1,"duplicate":True}
+ fp=offer_fp(p.source,p.url,p.title); pk=product_key(p.title); c=con()
+ if c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone() or (pk and c.execute("select 1 from product_history where product_key=?",(pk,)).fetchone()) or c.execute("select 1 from offers where fingerprint_key=?",(fp,)).fetchone():
   c.close(); return {"ok":1,"duplicate":True}
  c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags,fingerprint_key) values(?,?,?,?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"),0,p.tags,fp))
  c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
@@ -466,10 +500,13 @@ async def import_curated():
    if not title or not url or int(it.get("score",0))<8: continue
    if url in (GENERIC_NOON,GENERIC_TEMU,GENERIC_SHEIN): continue
    src=str(it.get("source","auto"))
-   fp=offer_fp(src,url,title)
+   if permanently_blocked(src,url,title): continue
+   fp=offer_fp(src,url,title); pk=product_key(title)
    c=con()
    ex=c.execute("select 1 from offers where fingerprint_key=?",(fp,)).fetchone()
    done=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
+   if not done and pk:
+    done=c.execute("select 1 from product_history where product_key=?",(pk,)).fetchone()
    if not ex and not done:
     c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags,fingerprint_key) values(?,?,?,?,?,?,?,?,?,?,?)",
       (title,str(it.get("current_price","")),str(it.get("old_price","")),str(it.get("code","")),url,src,"new",datetime.now(TZ).isoformat(timespec="seconds"),int(it.get("score",0)),str(it.get("tags","")),fp))
