@@ -21,7 +21,7 @@ else:
  if not SEC.exists(): SEC.write_bytes(secrets.token_bytes(32))
  RAW=SEC.read_bytes()
 CIPHER=Fernet(base64.urlsafe_b64encode(hashlib.sha256(RAW).digest()))
-app=FastAPI(title="LAQTA Control Center")
+app=FastAPI(title="LAQTA Control Center")\nPUBLISH_LOCK=asyncio.Lock()
 app.add_middleware(SessionMiddleware,secret_key=hashlib.sha256(RAW+b"session").hexdigest(),max_age=2592000)
 app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
 def con():
@@ -41,8 +41,26 @@ def auth(r):
 
 BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","buffer_channels_json","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand")
 
+def canonical_offer_key(source,url,title=""):
+ src=str(source or "").lower(); u=str(url or "").strip()
+ if "amazon" in src:
+  m=re.search(r"/dp/([A-Z0-9]{10})",u,re.I)
+  key=("asin:"+m.group(1).upper()) if m else u.split("?")[0]
+ elif "noon" in src:
+  m=re.search(r"/([A-Z0-9]{8,})/p/?",u,re.I)
+  key=("noon:"+m.group(1).upper()) if m else u.split("?")[0]
+ elif "temu" in src:
+  m=re.search(r"(?:product-g-|g-)(\d+)",u,re.I)
+  key=("temu:"+m.group(1)) if m else u.split("?")[0]
+ elif "shein" in src:
+  m=re.search(r"-p-(\d+)\.html",u,re.I)
+  key=("shein:"+m.group(1)) if m else u.split("?")[0]
+ else:
+  key=u.split("?")[0] or re.sub(r"\s+"," ",str(title or "").lower()).strip()
+ return f"{src}|{key}"
+
 def offer_fp(source,url,title):
- return hashlib.sha256(f"{source}|{url}|{title}".encode("utf-8","ignore")).hexdigest()
+ return hashlib.sha256(canonical_offer_key(source,url,title).encode("utf-8","ignore")).hexdigest()
 
 def build_encrypted_backup():
  c=con()
@@ -192,35 +210,34 @@ def offer_is_safe(o):
  if "amazon" in src:
   return "amazon.sa/dp/" in url and "tag=laqtasa06-21" in url
  if "noon" in src:
-  if url==GENERIC_NOON:
-   return title.startswith("عروض نون") and not cp
-  return "noon.com" in url and ("/p/" in url or "/product" in url) and code=="LQSA"
+  if url==GENERIC_NOON: return False
+  return "noon.com" in url and ("/p/" in url or "/product" in url) and code=="LQSA" and bool(cp)
  if "temu" in src:
-  if url==GENERIC_TEMU:
-   return title.startswith("عروض Temu") and not cp
-  return ("temu.to/k/" in url or "temu.com" in url) and code=="alr408026"
+  if url==GENERIC_TEMU: return False
+  return ("temu.to/k/" in url or "temu.com" in url) and code=="alr408026" and bool(cp)
  if "shein" in src:
-  if url==GENERIC_SHEIN:
-   return title.startswith("اختيارات SHEIN") and not cp
-  return "shein." in url and "-p-" in url and code=="US3RU32"
+  if url==GENERIC_SHEIN: return False
+  return "shein." in url and "-p-" in url and code=="US3RU32" and bool(cp)
  return url.startswith("http")
 
 def _hashtags(title,src,raw=""):
  tags=[]
  for x in re.findall(r"#[^\s#]+",str(raw or "")):
+  x=x.strip(".,،;:!؟")
+  if len(x)>1 and x not in tags: tags.append(x)
+ s=(title+" "+src).lower()
+ if "ايفون" in s or "iphone" in s: base=["#ايفون","#ابل","#تقنية","#تسوق"]
+ elif "قهوة" in s or "v60" in s or "coffee" in s: base=["#قهوة","#القهوه_السعوديه","#تسوق","#خصومات"]
+ elif "عطر" in s or "perfume" in s or "fragrance" in s: base=["#عطور","#عطور_رجالية","#تسوق","#خصومات"]
+ elif any(k in s for k in ("سماعة","سماعات","ماوس","كيبورد","كيبل","تابلت","شاحن","باور","gaming","rgb")): base=["#تقنية","#الكترونيات","#تسوق","#خصومات"]
+ elif any(k in s for k in ("مطبخ","منزل","كرسي","طاولة","أثاث")): base=["#المنزل","#تسوق","#عروض","#خصومات"]
+ else: base=["#عروض","#خصومات","#تسوق","#عروض_السعودية"]
+ for x in base+["#عروض_السعودية"]:
   if x not in tags: tags.append(x)
- if not tags:
-  s=(title+" "+src).lower()
-  if "ايفون" in s or "iphone" in s: tags=["#ايفون","#عروض_السعودية"]
-  elif "قهوة" in s or "v60" in s or "coffee" in s: tags=["#قهوة","#عروض_السعودية"]
-  elif "عطر" in s or "perfume" in s or "fragrance" in s: tags=["#عطور","#عروض_السعودية"]
-  elif any(k in s for k in ("سماعة","ماوس","كيبل","تابلت","شاحن","باور","gaming","rgb")): tags=["#تقنية","#عروض_السعودية"]
-  else: tags=["#عروض_السعودية"]
- return " ".join(tags[:2])
+ return " ".join(tags[:5])
 
 def compose(o):
  title=re.sub(r"\s+"," ",o["title"].strip())
- if len(title)>82: title=title[:79].rstrip()+"..."
  cp=o["current_price"].strip(); oldp=o["old_price"].strip(); code=o["code"].strip(); url=o["url"].strip()
  src=(o["source"] or "").lower()
  now=_money(cp); before=_money(oldp)
@@ -228,25 +245,31 @@ def compose(o):
  try: raw_tags=(o["tags"] or "").strip()
  except: raw_tags=""
  tags=_hashtags(title,src,raw_tags)
- store="نون" if "noon" in src else "Amazon" if "amazon" in src else "Temu" if "temu" in src else "SHEIN" if "shein" in src else ""
- seed=(sum(map(ord,title))+len(url))%5
+ store="نون" if "noon" in src else "أمازون" if "amazon" in src else "Temu" if "temu" in src else "SHEIN" if "shein" in src else ""
+ seed=(sum(map(ord,title))+len(url)+datetime.now(TZ).minute)%8
  if pct is not None:
-  variants=[
-   [f"لقيت هذا السعر على {store} 👀" if store else "لقيت هذا السعر 👀",title,f"{cp} بدل {oldp} — خصم {pct}%"],
-   ["هذا العرض يستاهل تشوفه 👇",title,f"السعر الآن {cp} بدل {oldp}"],
-   [title,f"نازل إلى {cp} بدل {oldp} 👀"],
-   [f"للي كان ينتظر سعر أفضل لـ {title}",f"{cp} بدل {oldp} — خصم {pct}%"],
-   [title,f"خصم {pct}% — صار {cp} بدل {oldp}"]
+  styles=[
+   [f"👀 شوفوا السعر هذا على {store}" if store else "👀 شوفوا السعر هذا",title,f"صار {cp} بدل {oldp} — خصم {pct}%"],
+   ["🔥 هذا العرض يستاهل تشيك عليه",title,f"{cp} بدل {oldp}"],
+   ["لقيت لكم سعر حلو 👇",title,f"الآن {cp} بعد ما كان {oldp}"],
+   [f"على {store} اليوم:" if store else "اليوم:",title,f"خصم {pct}% والسعر {cp}"],
+   ["إذا كنت ناوي عليه، شوف السعر 👀",title,f"{cp} بدل {oldp}"],
+   ["السعر نازل بشكل واضح 👇",title,f"من {oldp} إلى {cp}"],
+   ["عرض ملفت اليوم",title,f"خصم {pct}% — {cp}"],
+   ["هذا من العروض اللي وقفت عندها 👀",title,f"{cp} بدل {oldp}"]
   ]
  else:
-  variants=[
-   [f"لقيت هذا على {store} 👀" if store else "لقيت هذا 👀",title,f"السعر {cp}" if cp else ""],
-   ["هذا شدني اليوم 👇",title,f"{cp}" if cp else ""],
-   [title,f"السعر الحالي {cp}" if cp else ""],
-   [f"إذا كنت تدور {title}، هذا العرض موجود الآن",f"{cp}" if cp else ""],
-   [title,f"لقيته بهذا السعر: {cp}" if cp else ""]
+  styles=[
+   ["👀 لقيت هذا اليوم",title,f"السعر {cp}" if cp else ""],
+   ["هذا يستاهل تشيك عليه 👇",title,f"{cp}" if cp else ""],
+   [f"على {store}:" if store else "لقيته:",title,f"{cp}" if cp else ""],
+   ["لقطة سريعة اليوم",title,f"{cp}" if cp else ""],
+   ["للي يدور عليه 👇",title,f"السعر الحالي {cp}" if cp else ""],
+   ["هذا شدني اليوم",title,f"{cp}" if cp else ""],
+   [title,f"لقيته بهذا السعر: {cp}" if cp else ""],
+   ["موجود الآن بهذا السعر 👀",title,f"{cp}" if cp else ""]
   ]
- parts=[x for x in variants[seed] if x]
+ parts=[x for x in styles[seed] if x]
  if code:
   if "noon" in src: parts.append(f"كود: {code} — حسب شروط نون")
   elif "temu" in src: parts.append(f"كود: {code} — حسب الأهلية")
@@ -257,8 +280,13 @@ def compose(o):
  parts.append("رابط عمولة")
  text="\n".join(parts)
  if len(text)>278:
-  short=title[:50].rstrip()+"..."
-  parts=[short if x==title else x for x in parts]
+  title_short=title[:44].rstrip()+"..."
+  parts=[title_short if x==title else x for x in parts]
+  text="\n".join(parts)
+ if len(text)>278 and tags:
+  parts=[x for x in parts if x!=tags]
+  short_tags=" ".join(tags.split()[:3])
+  parts.insert(-1,short_tags)
   text="\n".join(parts)
  return text[:278]
 
@@ -295,24 +323,46 @@ async def publish_text(text):
   raise RuntimeError("فشل النشر على كل القنوات: "+" | ".join(errors[:3]))
  return sent
 async def publish_one(force=False):
- now=datetime.now(TZ); day=now.date().isoformat(); c=con(); n=c.execute("select posts from counters where day=?",(day,)).fetchone(); used=n["posts"] if n else 0
- if not force and used>=int(gs("max_day")): c.close(); return "وصل الحد اليومي"
- o=None
- while True:
-  cand=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
-  if not cand: break
-  if offer_is_safe(cand):
-   o=cand; break
-  c.execute("update offers set status='rejected' where id=?",(cand["id"],)); c.commit()
-  log("تم رفض عرض لأن الرابط لا يطابق المنتج: "+cand["title"],"error")
- if not o: c.close(); return "لا توجد عروض موثقة جاهزة"
- try:
-  sent=await publish_text(compose(o)); t=now.isoformat(timespec="seconds")
-  c.execute("update offers set status='posted',posted_at=? where id=?",(t,o["id"]))
-  c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,))
-  c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(offer_fp(o["source"],o["url"],o["title"]),t))
-  c.commit(); ss("last_post",t); log("تم إرسال عرض موثق إلى Buffer: "+o["title"]); return "تم"
- finally:c.close()
+ async with PUBLISH_LOCK:
+  now=datetime.now(TZ); day=now.date().isoformat()
+  c=con()
+  n=c.execute("select posts from counters where day=?",(day,)).fetchone(); used=n["posts"] if n else 0
+  if not force and used>=int(gs("max_day")):
+   c.close(); return "وصل الحد اليومي"
+  try:
+   while True:
+    cand=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
+    if not cand: return "لا توجد عروض موثقة جاهزة"
+    fp=offer_fp(cand["source"],cand["url"],cand["title"])
+    already=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
+    if already:
+     c.execute("update offers set status='duplicate' where id=?",(cand["id"],)); c.commit()
+     continue
+    if not offer_is_safe(cand):
+     c.execute("update offers set status='rejected' where id=?",(cand["id"],)); c.commit()
+     log("تم رفض عرض لأن الرابط لا يطابق المنتج: "+cand["title"],"error")
+     continue
+    c.execute("update offers set status='publishing' where id=?",(cand["id"],)); c.commit()
+    try:
+     await publish_text(compose(cand))
+    except Exception as e:
+     msg=str(e)
+     if "already got this one scheduled or posted" in msg.lower() or "same thing twice" in msg.lower():
+      c.execute("update offers set status='duplicate' where id=?",(cand["id"],))
+      c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(fp,now.isoformat(timespec="seconds")))
+      c.commit()
+      log("تجاوزت عرض مكرر في Buffer: "+cand["title"],"info")
+      continue
+     c.execute("update offers set status='new' where id=?",(cand["id"],)); c.commit()
+     raise
+    t=datetime.now(TZ).isoformat(timespec="seconds")
+    c.execute("update offers set status='posted',posted_at=? where id=?",(t,cand["id"]))
+    c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,))
+    c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(fp,t))
+    c.commit(); ss("last_post",t); log("تم إرسال عرض موثق إلى Buffer: "+cand["title"]); return "تم"
+  finally:
+   c.close()
+
 @app.post("/api/start")
 async def start(r:Request):
  auth(r)
@@ -361,7 +411,7 @@ async def import_curated():
    src=str(it.get("source","auto"))
    fp=offer_fp(src,url,title)
    c=con()
-   ex=c.execute("select 1 from offers where url=? or title=?",(url,title)).fetchone()
+   ex=c.execute("select 1 from offers where fingerprint_key=?",(fp,)).fetchone() if "fingerprint_key" in [r["name"] for r in c.execute("pragma table_info(offers)").fetchall()] else c.execute("select 1 from offers where url=? or title=?",(url,title)).fetchone()
    done=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
    if not ex and not done:
     c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags) values(?,?,?,?,?,?,?,?,?,?)",
