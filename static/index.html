@@ -1,83 +1,146 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#090a0d">
 <title>ONYX Motion Studio</title>
+<meta name="description" content="AI video creation, portrait animation and cinematic motion tools in one studio.">
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-<div class="glow g1"></div><div class="glow g2"></div>
-<header>
-  <div class="brand"><span class="mark">O</span><div><b>ONYX</b><small>Motion Studio</small></div></div>
-  <div class="status" id="status">جاري فحص المحرك…</div>
+<div class="ambient a"></div><div class="ambient b"></div><div class="noise"></div>
+
+<header class="topbar">
+  <a class="brand" href="#top"><span class="logo"><i></i></span><span><b>ONYX</b><small>MOTION STUDIO</small></span></a>
+  <nav><a href="#studio">Studio</a><a href="#showcase">Showcase</a><a href="#workflow">Workflow</a></nav>
+  <div class="engine" id="status"><i></i><span>Checking engine</span></div>
 </header>
 
-<main>
+<main id="top">
   <section class="hero">
-    <span class="eyebrow">AI VIDEO STUDIO</span>
-    <h1>صورتك. وصفك. <em>فيديوك.</em></h1>
-    <p>توليد فيديو من صورتك بوصف حر، تبديل وجه شخص محدد داخل أي فيديو، وفيديو ناطق — في واجهة واحدة.</p>
-  </section>
-
-  <nav class="tabs">
-    <button class="tab active" data-mode="image-to-video">صورة ← فيديو</button>
-    <button class="tab" data-mode="face-swap">تبديل الوجه</button>
-    <button class="tab" data-mode="talking-video">فيديو ناطق</button>
-  </nav>
-
-  <section class="workspace">
-    <div class="panel">
-      <div class="step"><i>01</i><div><b id="sourceTitle">ارفع صورتك</b><span id="sourceHint">صورة واضحة للوجه تعطي ثبات هوية أفضل.</span></div></div>
-      <label class="drop" id="sourceDrop">
-        <input id="source" type="file" accept="image/*,video/*,audio/*">
-        <strong>اضغط للاختيار أو اسحب الملف هنا</strong>
-        <span>PNG / JPG / MP4 / MOV / WAV</span>
-        <small id="sourceName"></small>
-      </label>
-
-      <div class="step"><i>02</i><div><b>صورة الهوية المرجعية</b><span>تُستخدم لتثبيت ملامحك أثناء التوليد أو الاستبدال.</span></div></div>
-      <label class="drop compact">
-        <input id="reference" type="file" accept="image/*">
-        <strong>أضف صورة مرجعية</strong>
-        <small id="refName"></small>
-      </label>
-
-      <div class="step"><i>03</i><div><b>اكتب ما تريده</b><span>الوصف حر — اكتب المشهد والحركة والكاميرا والإضاءة والملابس.</span></div></div>
-      <textarea id="prompt" placeholder="مثال: أمشي في شارع طوكيو وقت المطر، إضاءة سينمائية، الكاميرا تتبعني من الأمام بحركة بطيئة..."></textarea>
-
-      <div class="controls">
-        <label><span>المدة <b id="durLabel">10 ث</b></span><input id="duration" type="range" min="1" max="60" value="10"></label>
-        <label><span>ثبات الهوية <b id="idLabel">90%</b></span><input id="identity" type="range" min="0" max="100" value="90"></label>
-      </div>
-
-      <div class="chips">
-        <button data-prompt="إضاءة سينمائية واقعية، حركة كاميرا ناعمة، تفاصيل وجه طبيعية">سينمائي</button>
-        <button data-prompt="لقطة واقعية جدًا، حركة طبيعية للجسم والوجه، إضاءة ناعمة">واقعي</button>
-        <button data-prompt="مشهد ليلي تحت المطر، انعكاسات ضوئية، كاميرا تتحرك ببطء">ليل ممطر</button>
-      </div>
-
-      <button class="generate" id="generate">إنشاء المشروع <span>↗</span></button>
-      <p class="notice" id="notice"></p>
+    <div class="hero-copy reveal">
+      <div class="eyebrow"><span>AI VIDEO CREATION</span><i></i><span>PRIVATE STUDIO</span></div>
+      <h1>Turn one image into<br><em>a moving world.</em></h1>
+      <p>Create cinematic video from a reference image and a free-form prompt, transform a selected subject in footage, and build talking portraits from one focused workspace.</p>
+      <div class="hero-actions"><a class="primary" href="#studio">Open Studio <span>↗</span></a><a class="secondary" href="#showcase"><i>▶</i> View Demos</a></div>
+      <div class="hero-meta"><span>✓ Identity control</span><span>✓ Free-form prompting</span><span>✓ Long-form extension</span></div>
     </div>
 
-    <aside>
-      <div class="preview">
-        <div class="scan"></div>
-        <div class="previewIcon">◉</div>
-        <b>المعاينة</b>
-        <span>بعد تجهيز المحرك ستظهر هنا معاينة قصيرة قبل الرندر الكامل.</span>
+    <div class="stage reveal d1">
+      <div class="monitor">
+        <div class="monitor-head"><span>LIVE PREVIEW</span><span>00:08 / 00:12</span></div>
+        <div class="monitor-scene">
+          <div class="sky"></div><div class="city c1"></div><div class="city c2"></div>
+          <div class="person"><i></i><b></b></div>
+          <div class="focus f1"></div><div class="focus f2"></div><div class="focus f3"></div><div class="focus f4"></div>
+          <div class="rain r1"></div><div class="rain r2"></div>
+          <div class="caption"><small>PROMPT</small><span>Slow cinematic walk through a rainy neon city, natural motion, soft reflections...</span></div>
+        </div>
+        <div class="timeline"><span><i></i></span><b>24 FPS</b><b>HD</b></div>
       </div>
-      <div class="features">
-        <div><b>Identity Lock</b><span>تثبيت ملامح الوجه بين الفريمات</span></div>
-        <div><b>Multi-face Tracking</b><span>اختيار وتتبع شخص واحد داخل الفيديو</span></div>
-        <div><b>Long Video Extend</b><span>تمديد المقاطع الطويلة على مراحل</span></div>
-        <div><b>Face Refinement</b><span>تنظيف الحواف وتفاصيل الوجه بعد الرندر</span></div>
+      <div class="float-chip one">◆ <span>Identity Lock</span><b>98%</b></div>
+      <div class="float-chip two">✦ <span>Motion Stable</span></div>
+    </div>
+  </section>
+
+  <div class="ticker"><span>ONE STUDIO</span><i></i><span>IMAGE → VIDEO</span><i></i><span>IDENTITY TRANSFORM</span><i></i><span>TALKING PORTRAITS</span><i></i><span>PRIVATE WORKFLOW</span></div>
+
+  <section class="studio" id="studio">
+    <div class="section-head reveal"><div><small>CREATE</small><h2>Your production workspace.</h2></div><p>Upload, direct, preview and render without leaving the page.</p></div>
+
+    <div class="tabs reveal">
+      <button class="tab active" data-mode="image-to-video"><span>01</span> Image to Video</button>
+      <button class="tab" data-mode="face-swap"><span>02</span> Video Identity Transform</button>
+      <button class="tab" data-mode="talking-video"><span>03</span> Talking Video</button>
+    </div>
+
+    <div class="workspace reveal">
+      <div class="editor">
+        <div class="step">
+          <div class="step-title"><i>01</i><div><b id="sourceTitle">Upload your image</b><span id="sourceHint">Use a clear portrait for stronger identity consistency.</span></div></div>
+          <label class="drop"><input id="source" type="file" accept="image/*,video/*,audio/*"><strong>↑</strong><b>Drop media here or browse</b><span>PNG · JPG · MP4 · MOV · WAV</span><em id="sourceName"></em></label>
+        </div>
+
+        <div class="step">
+          <div class="step-title"><i>02</i><div><b>Identity reference</b><span>Optional for generation. Required for identity transformation.</span></div></div>
+          <label class="drop compact"><input id="reference" type="file" accept="image/*"><strong>+</strong><b>Add reference image</b><em id="refName"></em></label>
+        </div>
+
+        <div class="step">
+          <div class="step-title"><i>03</i><div><b>Direct the scene</b><span>Write freely — action, camera, lighting, wardrobe, mood and environment.</span></div></div>
+          <div class="prompt-box"><textarea id="prompt" placeholder="Example: I walk through a rainy Tokyo street at night, cinematic lighting, slow forward camera movement, natural body motion, realistic skin detail..."></textarea><footer><span>Free-form prompt</span><span id="charCount">0 characters</span></footer></div>
+        </div>
+
+        <div class="controls">
+          <label><span><b>Duration</b><strong id="durLabel">10s</strong></span><input id="duration" type="range" min="1" max="60" value="10"><small>1–60 seconds</small></label>
+          <label><span><b>Identity strength</b><strong id="idLabel">90%</strong></span><input id="identity" type="range" min="0" max="100" value="90"><small>Higher = closer facial identity</small></label>
+        </div>
+
+        <div class="presets">
+          <button data-prompt="cinematic lighting, smooth camera movement, realistic facial detail, subtle film texture">Cinematic</button>
+          <button data-prompt="photorealistic scene, natural body motion, soft realistic light, believable skin texture">Photoreal</button>
+          <button data-prompt="night scene in the rain, glossy reflections, slow atmospheric camera movement">Rainy Night</button>
+          <button data-prompt="luxury editorial look, premium wardrobe, controlled studio lighting, elegant camera movement">Editorial</button>
+        </div>
+
+        <button class="generate" id="generate"><i></i><b>Generate Project</b><span>↗</span></button>
+        <div class="notice" id="notice"></div>
       </div>
-    </aside>
+
+      <aside>
+        <div class="preview-card">
+          <div class="card-head"><span>OUTPUT PREVIEW</span><b>READY AREA</b></div>
+          <div class="preview" id="preview"><div class="preview-grid"></div><div class="preview-icon"><i></i></div><b>Your render will appear here</b><p>Preview the result before exporting the final video.</p></div>
+        </div>
+        <div class="features">
+          <div><i></i><span><b>Identity Lock</b><small>Frame-to-frame identity consistency</small></span></div>
+          <div><i></i><span><b>Subject Tracking</b><small>Keep one chosen subject through motion</small></span></div>
+          <div><i></i><span><b>Long Video Extend</b><small>Continue scenes beyond a short base clip</small></span></div>
+          <div><i></i><span><b>Face Refinement</b><small>Clean edges and restore facial detail</small></span></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="showcase" id="showcase">
+    <div class="section-head reveal"><div><small>EXPERIENCE</small><h2>Built to feel like a real studio.</h2></div><p>Interactive visual demos of the workflows inside ONYX.</p></div>
+    <div class="demo-grid">
+      <article class="demo reveal">
+        <div class="demo-head"><span>IMAGE → VIDEO</span><b>01</b></div>
+        <div class="demo-window motion-demo"><div class="ghost-person"><i></i><b></b></div><span class="trail t1"></span><span class="trail t2"></span><button>▶</button><small>VISUAL DEMO</small></div>
+        <h3>Animate a single portrait</h3><p>Start with one image, describe a scene, then control movement and duration.</p>
+      </article>
+      <article class="demo reveal d1">
+        <div class="demo-head"><span>IDENTITY TRANSFORM</span><b>02</b></div>
+        <div class="swap-demo"><div><small>SOURCE</small><i class="face"></i></div><span>→<small>TRACK</small></span><div><small>REFERENCE</small><i class="face alt"></i></div></div>
+        <h3>Target one person in footage</h3><p>Use a reference identity and keep the transformation tied to the chosen subject.</p>
+      </article>
+      <article class="demo reveal">
+        <div class="demo-head"><span>TALKING VIDEO</span><b>03</b></div>
+        <div class="demo-window motion-demo"><div class="ghost-person"><i></i><b></b></div><span class="trail t1"></span><span class="trail t2"></span><button>▶</button><small>VOICE + MOTION</small></div>
+        <h3>Turn a portrait into a speaker</h3><p>Designed for spoken delivery, lip-sync and natural head movement.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="workflow" id="workflow">
+    <div class="workflow-copy reveal"><small>WORKFLOW</small><h2>Four steps.<br>One clean pipeline.</h2><p>The interface stays simple while the processing pipeline handles the technical work behind the scenes.</p></div>
+    <div class="workflow-steps">
+      <div class="flow reveal"><span>01</span><div><b>Upload</b><p>Add your source image, video or reference.</p></div></div>
+      <div class="flow reveal"><span>02</span><div><b>Direct</b><p>Describe the shot naturally with no template lock-in.</p></div></div>
+      <div class="flow reveal"><span>03</span><div><b>Preview</b><p>Inspect the result before the final render.</p></div></div>
+      <div class="flow reveal"><span>04</span><div><b>Render</b><p>Export once the project looks right.</p></div></div>
+    </div>
+  </section>
+
+  <section class="quality reveal">
+    <div><small>ONYX STANDARD</small><h2>Designed for detail, not gimmicks.</h2></div>
+    <div class="quality-list"><span>Natural motion</span><span>Identity consistency</span><span>Cinematic control</span><span>Mobile responsive</span></div>
   </section>
 </main>
-<footer>ONYX Motion Studio · Private project build</footer>
+
+<footer class="site-footer"><span>ONYX Motion Studio</span><span>AI-powered motion tools in one private creative workspace.</span><span>© 2026 ONYX</span></footer>
 <script src="/static/app.js"></script>
 </body>
 </html>
