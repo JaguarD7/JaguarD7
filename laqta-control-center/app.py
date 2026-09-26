@@ -76,10 +76,11 @@ async def restore_backup():
  except Exception:
   return False
 def init():
- c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '',score integer default 0);create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);create table if not exists history(fingerprint text primary key,posted_at text);""")
+ c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '',score integer default 0,tags text default '');create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);create table if not exists history(fingerprint text primary key,posted_at text);""")
  try:
   cols=[r["name"] for r in c.execute("pragma table_info(offers)").fetchall()]
   if "score" not in cols: c.execute("alter table offers add column score integer default 0")
+  if "tags" not in cols: c.execute("alter table offers add column tags text default ''")
  except: pass
  defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"60","max_day":"24","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
@@ -88,7 +89,7 @@ class Pwd(BaseModel): password:str
 class Settings(BaseModel):
  buffer_key:str|None=None; interval:int=120; max_day:int=8; mode:str="queue"; start:str="08:00"; end:str="23:30"; disclosure:str="قد نحصل على عمولة من بعض الروابط."
 class Offer(BaseModel):
- title:str; current_price:str=""; old_price:str=""; code:str=""; url:str=""; source:str="manual"
+ title:str; current_price:str=""; old_price:str=""; code:str=""; url:str=""; source:str="manual"; tags:str=""
 class Source(BaseModel): name:str; url:str
 @app.on_event("startup")
 async def up():
@@ -242,7 +243,11 @@ def compose(o):
   elif "shein" in src: parts.append(f"🏷️ {code} | حسب الأهلية")
   else: parts.append(f"🏷️ {code}")
  if url: parts.append(f"👇 {url}")
- parts.append(_hashtags(title,src))
+ try:
+  trend_tags=(o["tags"] or "").strip()
+ except:
+  trend_tags=""
+ parts.append(trend_tags or _hashtags(title,src))
  text="\n".join(parts)
  if len(text)>278:
   # Never cut the link or hashtags; shorten only the product title.
@@ -322,7 +327,7 @@ async def offers(r:Request):
  auth(r); c=con(); a=[dict(x) for x in c.execute("select * from offers order by id desc limit 100")]; c.close(); return a
 @app.post("/api/offers")
 async def addoffer(p:Offer,r:Request):
- auth(r); c=con(); c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score) values(?,?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"),0)); c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
+ auth(r); c=con(); c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags) values(?,?,?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"),0,p.tags)); c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
 @app.delete("/api/offers/{oid}")
 async def deloffer(oid:int,r:Request):
  auth(r); c=con(); c.execute("delete from offers where id=?",(oid,)); c.commit(); c.close(); return {"ok":1}
@@ -352,8 +357,8 @@ async def import_curated():
    ex=c.execute("select 1 from offers where url=? or title=?",(url,title)).fetchone()
    done=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
    if not ex and not done:
-    c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score) values(?,?,?,?,?,?,?,?,?)",
-      (title,str(it.get("current_price","")),str(it.get("old_price","")),str(it.get("code","")),url,src,"new",datetime.now(TZ).isoformat(timespec="seconds"),int(it.get("score",0))))
+    c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags) values(?,?,?,?,?,?,?,?,?,?)",
+      (title,str(it.get("current_price","")),str(it.get("old_price","")),str(it.get("code","")),url,src,"new",datetime.now(TZ).isoformat(timespec="seconds"),int(it.get("score",0)),str(it.get("tags",""))))
     c.commit(); added+=1
    c.close()
  except Exception as e:
