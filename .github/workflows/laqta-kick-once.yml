@@ -1,0 +1,15 @@
+name: LAQTA Immediate Kick
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/laqta-kick-once.yml"
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified offer now
+        run: |
+          curl -fsS --retry 5 --retry-delay 10 https://laqta-control-center.onrender.com/api/kick-now-7f4d2a
