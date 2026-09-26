@@ -1,18 +1,6 @@
 {
-  "generated_at": "2026-09-26T13:23:20.328Z",
+  "generated_at": "2026-09-26T13:29:36+00:00",
   "offers": [
-    {
-      "title": "ميكسر ألعاب وبث RGB مع مدخل XLR",
-      "current_price": "15.03 ر.س",
-      "old_price": "",
-      "code": "alr408026",
-      "url": "https://temu.to/k/eos9yxu17dw",
-      "source": "temu",
-      "score": 9,
-      "discount": 0,
-      "verified_at": "2026-09-26T13:23:20.328Z",
-      "source_url": "user_shared"
-    },
     {
       "title": "عروض Temu المختارة اليوم",
       "current_price": "",
@@ -22,8 +10,9 @@
       "source": "temu",
       "score": 6,
       "discount": 0,
-      "verified_at": "2026-09-26T13:23:20.328Z",
-      "source_url": "campaign"
+      "verified_at": "2026-09-26T13:29:36+00:00",
+      "source_url": "campaign",
+      "tracking": "campaign_link"
     },
     {
       "title": "اختيارات SHEIN والعروض الحالية",
@@ -34,8 +23,9 @@
       "source": "shein",
       "score": 6,
       "discount": 0,
-      "verified_at": "2026-09-26T13:23:20.328Z",
-      "source_url": "campaign"
+      "verified_at": "2026-09-26T13:29:36+00:00",
+      "source_url": "campaign",
+      "tracking": "campaign_link"
     },
     {
       "title": "عروض نون السعودية اليوم",
@@ -46,8 +36,9 @@
       "source": "noon",
       "score": 6,
       "discount": 0,
-      "verified_at": "2026-09-26T13:23:20.328Z",
-      "source_url": "campaign"
+      "verified_at": "2026-09-26T13:29:36+00:00",
+      "source_url": "campaign",
+      "tracking": "campaign_link"
     }
   ]
 }
