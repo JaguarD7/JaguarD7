@@ -1,4 +1,4 @@
-import asyncio, os, sqlite3, re, secrets, hashlib, base64, json, urllib.parse
+import asyncio, os, sqlite3, re, secrets, hashlib, base64, json, urllib.parse, html
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -291,28 +291,44 @@ async def _live_saudi_trends():
   async with httpx.AsyncClient(timeout=15,follow_redirects=True,headers=headers) as x:
    rr=await x.get(LIVE_TRENDS_URL)
    rr.raise_for_status()
-  page=rr.text
-  # Only accept trend tags surfaced by X itself. No third-party trend source/fallback.
-  raw=[]
-  raw.extend(re.findall(r'(?:href|data-testid)="[^"]*(?:search\?q=|hashtag/)(?:%23|#)?([^"&/<]{2,80})',page,re.I))
-  raw.extend(re.findall(r'#([\w\u0600-\u06ff_]{2,60})',page))
+  page=html.unescape(rr.text).replace("\\/","/")
+  # Accept ONLY X's own trend-click search links. Never scan raw HTML for '#...'
+  # because CSS colors such as #fff are not trends.
+  links=[]
+  links.extend(re.findall(r'href=["\\']([^"\\']*?/search\\?[^"\\']+)["\\']',page,re.I))
+  links.extend(re.findall(r'["\\']url["\\']\\s*:\\s*["\\']([^"\\']*?/search\\?[^"\\']+)["\\']',page,re.I))
   tags=[]
-  for item in raw:
+  for href in links:
    try:
-    item=urllib.parse.unquote(str(item))
+    u=urllib.parse.urlparse(href)
+    qs=urllib.parse.parse_qs(u.query)
+    src=" ".join(qs.get("src",[])).lower()
+    vertical=" ".join(qs.get("vertical",[])).lower()
+    q=(qs.get("q") or [""])[0].strip()
+    # X marks Explore trend links with trend_click / trends.
+    if "trend" not in src and "trend" not in vertical:
+     continue
+    if not q.startswith("#"):
+     continue
+    item=q[1:].strip()
+    item=re.sub(r"[^\\w\\u0600-\\u06ff_]+","",item)
+    # Reject CSS/hex-looking junk and tiny parser artifacts.
+    if len(item)<2 or re.fullmatch(r"[0-9a-fA-F]{3,8}",item):
+     continue
+    t="#"+item
+    if t not in tags: tags.append(t)
    except Exception:
-    item=str(item)
-   item=item.split("&")[0].strip().lstrip("#")
-   item=re.sub(r"[^\w\u0600-\u06ff_]+","",item)
-   if len(item)<2: continue
-   t="#"+item
-   if t not in tags: tags.append(t)
-  if tags:
-   TREND_CACHE["at"]=now
-   TREND_CACHE["tags"]=tags[:80]
+    continue
+  TREND_CACHE["at"]=now
+  TREND_CACHE["tags"]=tags[:80]
   return TREND_CACHE["tags"]
  except Exception:
   return TREND_CACHE["tags"]
+
+@app.get("/api/x-trends-check")
+async def x_trends_check():
+ tags=await _live_saudi_trends()
+ return {"source":LIVE_TRENDS_URL,"count":len(tags),"tags":tags[:20]}
 
 def _trend_relevant(title,src,tag):
  s=(str(title or "")+" "+str(src or "")).lower()
