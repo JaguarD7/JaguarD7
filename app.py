@@ -49,8 +49,38 @@ def capabilities():
         "provider_configured": True,
     }
 
+def normalize_arabic_prompt(raw: str) -> str:
+    # Lightweight local Arabic director: keeps the user's text and adds explicit English intent
+    # for common motion/edit instructions so Wan receives English semantic anchors.
+    low = raw.lower()
+    intents = []
+    wardrobe = {
+        "بكيني": "wear a bikini",
+        "فستان": "wear a dress",
+        "بدلة": "wear a suit",
+        "ملابس": "change the requested clothing/outfit",
+        "لبسني": "change my outfit as requested",
+    }
+    actions = {
+        "ارقص": "dance with clear full-body rhythmic movement",
+        "رقصني": "dance with clear full-body rhythmic movement",
+        "رقص": "dance with clear full-body rhythmic movement",
+        "امشي": "walk naturally",
+        "اجري": "run naturally",
+        "اركض": "run naturally",
+        "ابتسم": "smile naturally",
+        "لف": "turn naturally",
+    }
+    for ar, en in {**wardrobe, **actions}.items():
+        if ar in low and en not in intents:
+            intents.append(en)
+    if intents:
+        return raw + ". Interpreted intent in English: " + ", ".join(intents)
+    return raw
+
 def direct_prompt(prompt: str) -> str:
     raw = (prompt or "").strip()
+    raw = normalize_arabic_prompt(raw)
     if not raw:
         return "cinematic natural motion, realistic body movement, subtle expression, smooth camera motion, preserve subject identity"
     low = raw.lower()
