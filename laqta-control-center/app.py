@@ -1,4 +1,4 @@
-import asyncio, os, sqlite3, re, secrets, hashlib, base64, json
+import asyncio, os, sqlite3, re, secrets, hashlib, base64, json, urllib.parse
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -275,7 +275,7 @@ def offer_is_safe(o):
   return "shein." in url and "-p-" in url and code=="US3RU32" and bool(cp)
  return url.startswith("http")
 
-LIVE_TRENDS_URL="https://trends24.in/saudi-arabia/"
+LIVE_TRENDS_URL="https://x.com/explore/tabs/trending"
 TREND_CACHE={"at":0.0,"tags":[]}
 
 async def _live_saudi_trends():
@@ -283,16 +283,33 @@ async def _live_saudi_trends():
  if TREND_CACHE["tags"] and now-TREND_CACHE["at"]<900:
   return TREND_CACHE["tags"]
  try:
-  async with httpx.AsyncClient(timeout=10,follow_redirects=True,headers={"User-Agent":"Mozilla/5.0 LAQTA/1.0"}) as x:
+  headers={
+   "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154.0.0.0 Safari/537.36",
+   "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+   "Accept-Language":"ar-SA,ar;q=0.9,en;q=0.7"
+  }
+  async with httpx.AsyncClient(timeout=15,follow_redirects=True,headers=headers) as x:
    rr=await x.get(LIVE_TRENDS_URL)
    rr.raise_for_status()
   page=rr.text
-  raw=re.findall(r"#([\w\u0600-\u06ff_]{2,60})",page)
+  # Only accept trend tags surfaced by X itself. No third-party trend source/fallback.
+  raw=[]
+  raw.extend(re.findall(r'(?:href|data-testid)="[^"]*(?:search\?q=|hashtag/)(?:%23|#)?([^"&/<]{2,80})',page,re.I))
+  raw.extend(re.findall(r'#([\w\u0600-\u06ff_]{2,60})',page))
   tags=[]
-  for x in raw:
-   t="#"+x.strip("_")
-   if len(t)>2 and t not in tags: tags.append(t)
-  TREND_CACHE["at"]=now; TREND_CACHE["tags"]=tags[:80]
+  for item in raw:
+   try:
+    item=urllib.parse.unquote(str(item))
+   except Exception:
+    item=str(item)
+   item=item.split("&")[0].strip().lstrip("#")
+   item=re.sub(r"[^\w\u0600-\u06ff_]+","",item)
+   if len(item)<2: continue
+   t="#"+item
+   if t not in tags: tags.append(t)
+  if tags:
+   TREND_CACHE["at"]=now
+   TREND_CACHE["tags"]=tags[:80]
   return TREND_CACHE["tags"]
  except Exception:
   return TREND_CACHE["tags"]
