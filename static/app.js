@@ -81,6 +81,7 @@ async function watchJob(id){
     if(!r.ok)throw new Error(j.detail||"Could not read render status");
     const labels={starting:"Preparing image",connecting:"Connecting to Wan 2.2",queued:"ZeroGPU queue / rendering",completed:"Render complete",failed:"Render failed"};
     notice.textContent=(labels[j.status]||j.status)+" · "+(j.progress||0)+"%";
+    if(j.directed_prompt && j.status==="queued") notice.title="ONYX Director: "+j.directed_prompt;
     if(j.status==="completed"){
       renderOutput(j.output_url);
       return;
