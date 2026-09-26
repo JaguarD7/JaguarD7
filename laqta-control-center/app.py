@@ -32,7 +32,7 @@ def auth(r):
  if not r.session.get("ok"): raise HTTPException(401,"login_required")
 def init():
  c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '');create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);""")
- defs={"admin_hash":"","buffer_key":"","buffer_channel":"","buffer_channel_name":"","automation":"0","interval":"120","max_day":"8","mode":"queue","start":"08:00","end":"23:30","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","brand":"لقطة | LAQTA"}
+ defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","automation":"0","interval":"120","max_day":"8","mode":"queue","start":"08:00","end":"23:30","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
 class Pwd(BaseModel): password:str
@@ -70,7 +70,7 @@ async def settings(r:Request):
 async def saveset(p:Settings,r:Request):
  auth(r)
  for k in ("interval","max_day","mode","start","end","disclosure"): ss(k,getattr(p,k))
- if p.buffer_key: ss("buffer_key",enc(p.buffer_key.strip())); ss("buffer_channel",""); ss("buffer_channel_name","")
+ if p.buffer_key: ss("buffer_key",enc(p.buffer_key.strip())); ss("buffer_org",""); ss("buffer_channel",""); ss("buffer_channel_name","")
  log("تم حفظ الإعدادات"); return {"ok":1}
 async def bgql(query,variables=None):
  key=dec(gs("buffer_key"))
@@ -82,14 +82,33 @@ async def bgql(query,variables=None):
   if j.get("errors"): raise RuntimeError(j["errors"][0].get("message","Buffer API error"))
   return j.get("data",{})
 async def discover():
- qs=["""query { channels { id name service } }""","""query { channels { id name service { name } } }""","""query { account { channels { id name service } } }"""]; last=None
- for q in qs:
-  try:
-   d=await bgql(q); chans=d.get("channels") or (d.get("account") or {}).get("channels") or []
-   if chans:
-    ch=next((z for z in chans if "twitter" in str(z).lower() or '"x"' in str(z).lower()),chans[0]); ss("buffer_channel",ch.get("id","")); ss("buffer_channel_name",ch.get("name") or str(ch.get("service","Buffer"))); return ch
-  except Exception as e:last=e
- raise RuntimeError(str(last or "لم أجد قناة في Buffer"))
+ d=await bgql("""query GetOrganizations { account { organizations { id name ownerEmail } } }""")
+ orgs=(d.get("account") or {}).get("organizations") or []
+ if not orgs: raise RuntimeError("لم أجد Organization في حساب Buffer")
+ org=orgs[0]
+ org_id=org.get("id")
+ q="""query GetChannels($orgId: OrganizationId!) {
+   channels(input: { organizationId: $orgId }) {
+     id
+     name
+     displayName
+     service
+     isQueuePaused
+   }
+ }"""
+ d=await bgql(q,{"orgId":org_id})
+ chans=d.get("channels") or []
+ if not chans: raise RuntimeError("لا توجد قنوات Social متصلة داخل Buffer")
+ ch=next((z for z in chans if str(z.get("service","")).lower()=="twitter"),None)
+ if not ch:
+  ch=next((z for z in chans if "twitter" in str(z).lower() or '"x"' in str(z).lower()),None)
+ if not ch:
+  names=", ".join([f"{z.get('displayName') or z.get('name')} ({z.get('service')})" for z in chans])
+  raise RuntimeError("لم أجد قناة X/Twitter في Buffer. القنوات الموجودة: "+names)
+ ss("buffer_org",org_id)
+ ss("buffer_channel",ch.get("id",""))
+ ss("buffer_channel_name",ch.get("displayName") or ch.get("name") or "X")
+ return {"organization":org,"channel":ch}
 @app.post("/api/buffer/test")
 async def btest(r:Request):
  auth(r)
@@ -106,12 +125,25 @@ def compose(o):
  parts.append("#عروض #خصومات #السعودية"); return "\n".join(parts)[:275]
 async def publish_text(text):
  cid=gs("buffer_channel")
- if not cid: await discover(); cid=gs("buffer_channel")
- attempts=[("""mutation CreatePost($input: CreatePostInput!) { createPost(input:$input) { id } }""",{"input":{"channelId":cid,"text":text,"mode":gs("mode")}}),("""mutation CreatePost($input: PostInput!) { createPost(input:$input) { id } }""",{"input":{"channelId":cid,"text":text}}),("""mutation CreateUpdate($input: CreateUpdateInput!) { createUpdate(input:$input) { id } }""",{"input":{"profileId":cid,"text":text,"now":gs("mode")=="now"}})]; last=None
- for q,v in attempts:
-  try:return await bgql(q,v)
-  except Exception as e:last=e
- raise RuntimeError(str(last or "تعذر إنشاء المنشور عبر Buffer"))
+ if not cid:
+  await discover()
+  cid=gs("buffer_channel")
+ mode="shareNow" if gs("mode")=="now" else "addToQueue"
+ q="""mutation CreatePost($input: CreatePostInput!) {
+   createPost(input:$input) {
+     ... on PostActionSuccess {
+       post { id text dueAt status shareMode }
+     }
+     ... on MutationError {
+       message
+     }
+   }
+ }"""
+ d=await bgql(q,{"input":{"text":text,"channelId":cid,"schedulingType":"automatic","mode":mode}})
+ result=d.get("createPost") or {}
+ if result.get("message"): raise RuntimeError(result.get("message"))
+ if not result.get("post"): raise RuntimeError("Buffer لم يرجع Post بعد طلب النشر")
+ return result.get("post")
 async def publish_one(force=False):
  now=datetime.now(TZ); day=now.date().isoformat(); c=con(); n=c.execute("select posts from counters where day=?",(day,)).fetchone(); used=n["posts"] if n else 0
  if not force and used>=int(gs("max_day")): c.close(); return "وصل الحد اليومي"
