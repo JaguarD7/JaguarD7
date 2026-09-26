@@ -251,7 +251,7 @@ def _hashtags(title,src,raw=""):
  tags=[]
  for x in re.findall(r"#[^\s#]+",str(raw or "")):
   x=x.strip(".,،;:!؟")
-  if len(x)>1 and x not in tags: tags.append(x)
+  if len(x.lstrip("#"))>=2 and x not in tags: tags.append(x)
  s=(title+" "+src).lower()
  if "ايفون" in s or "iphone" in s: base=["#ايفون","#ابل","#تقنية","#تسوق","#عروض_السعودية"]
  elif "قهوة" in s or "v60" in s or "coffee" in s: base=["#قهوة","#القهوه_السعوديه","#تسوق","#خصومات","#عروض_السعودية"]
