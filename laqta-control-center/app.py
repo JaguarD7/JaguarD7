@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
-from deal_image import make_deal_image, MEDIA_DIR
+from deal_image import prepare_deal_asset, MEDIA_DIR
 BASE=Path(__file__).resolve().parent
 DB=BASE/"laqta.db"; SEC=BASE/".laqta_secret"; TZ=ZoneInfo("Asia/Riyadh")
 CURATED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/curated_offers.json"
@@ -272,64 +272,62 @@ def _xlen(text):
  total+=len(text[pos:])
  return total
 
+def _short_product_title(title):
+ t=re.sub(r"\s+"," ",str(title or "")).strip()
+ # Keep the recognizable product/model, drop marketplace boilerplate.
+ t=re.sub(r"\s*[-|]\s*(?:Amazon|Noon|SHEIN|Temu).*$","",t,flags=re.I)
+ t=re.sub(r"\s+(?:مع FaceTime|نسخة الشرق الأوسط|Middle East Version).*$","",t,flags=re.I)
+ return t[:92].rstrip(" ,-")
+
 def compose(o):
- title=re.sub(r"\s+"," ",o["title"].strip())
- cp=o["current_price"].strip(); oldp=o["old_price"].strip(); code=o["code"].strip(); url=o["url"].strip()
- src=(o["source"] or "").lower()
+ title=_short_product_title(o["title"])
+ cp=str(o["current_price"] or "").strip(); oldp=str(o["old_price"] or "").strip()
+ code=str(o["code"] or "").strip(); url=str(o["url"] or "").strip()
+ src=str(o["source"] or "").lower()
  now=_money(cp); before=_money(oldp)
  pct=round((before-now)/before*100) if now is not None and before is not None and before>now else None
+ saving=round(before-now,2) if now is not None and before is not None and before>now else None
  try: raw_tags=(o["tags"] or "").strip()
  except: raw_tags=""
  tags=_hashtags(title,src,raw_tags)
  store="نون" if "noon" in src else "أمازون" if "amazon" in src else "Temu" if "temu" in src else "SHEIN" if "shein" in src else ""
- seed=(sum(map(ord,title))+len(url)+datetime.now(TZ).minute)%8
+ seed=(sum(map(ord,title))+len(url))%6
+
+ hooks=[
+  "🔥 لقطة اليوم",
+  "👀 هذا السعر يستاهل وقفة",
+  "⚡ لقيتها بسعر ملفت",
+  "🎯 لقطة تستاهل تشيكها",
+  "💸 إذا كنت ناوي عليه، شوف السعر",
+  "✨ اختيار اليوم من لقطة"
+ ]
+ parts=[hooks[seed]]
+ if store: parts[0]+=f" على {store}"
+ parts.append(title)
  if pct is not None:
-  styles=[
-   [f"👀 شوفوا السعر هذا على {store}" if store else "👀 شوفوا السعر هذا",title,f"صار {cp} بدل {oldp} — خصم {pct}%"],
-   ["🔥 هذا العرض يستاهل تشيك عليه",title,f"{cp} بدل {oldp}"],
-   ["لقيت لكم سعر حلو 👇",title,f"الآن {cp} بعد ما كان {oldp}"],
-   [f"على {store} اليوم:" if store else "اليوم:",title,f"خصم {pct}% والسعر {cp}"],
-   ["إذا كنت ناوي عليه، شوف السعر 👀",title,f"{cp} بدل {oldp}"],
-   ["السعر نازل بشكل واضح 👇",title,f"من {oldp} إلى {cp}"],
-   ["عرض ملفت اليوم",title,f"خصم {pct}% — {cp}"],
-   ["هذا من العروض اللي وقفت عندها 👀",title,f"{cp} بدل {oldp}"]
-  ]
- else:
-  styles=[
-   ["👀 لقيت هذا اليوم",title,f"السعر {cp}" if cp else ""],
-   ["هذا يستاهل تشيك عليه 👇",title,f"{cp}" if cp else ""],
-   [f"على {store}:" if store else "لقيته:",title,f"{cp}" if cp else ""],
-   ["لقطة سريعة اليوم",title,f"{cp}" if cp else ""],
-   ["للي يدور عليه 👇",title,f"السعر الحالي {cp}" if cp else ""],
-   ["هذا شدني اليوم",title,f"{cp}" if cp else ""],
-   [title,f"لقيته بهذا السعر: {cp}" if cp else ""],
-   ["موجود الآن بهذا السعر 👀",title,f"{cp}" if cp else ""]
-  ]
- core=[x for x in styles[seed] if x]
+  if saving is not None and saving>=1:
+   parts.append(f"{cp} بدل {oldp} — وفر {saving:g} ر.س ({pct}%)")
+  else:
+   parts.append(f"{cp} بدل {oldp} — خصم {pct}%")
+ elif cp:
+  parts.append(f"السعر الآن: {cp}")
  if code:
-  if "noon" in src: core.append(f"كود: {code} — حسب شروط نون")
-  elif "temu" in src: core.append(f"كود: {code} — حسب الأهلية")
-  elif "shein" in src: core.append(f"كود: {code} — حسب الأهلية")
-  else: core.append(f"كود: {code}")
- if url: core.append(url)
+  if "noon" in src: parts.append(f"كود: {code} — حسب شروط نون")
+  elif "temu" in src or "shein" in src: parts.append(f"كود: {code} — حسب أهلية الحساب")
+  else: parts.append(f"كود: {code}")
+ parts.append("الرابط 👇")
+ parts.append(url)
+ if tags: parts.append(" ".join(tags))
+ parts.append("لقطة | ندوّر الأرخص ونجيب لك الزبدة • رابط عمولة")
 
- def assemble(ttags,short_title=None):
-  p=[]
-  for x in core:
-   if x==title and short_title: p.append(short_title)
-   else: p.append(x)
-  if ttags: p.append(" ".join(ttags))
-  p.append("رابط عمولة")
-  return "\n".join(p)
-
- text=assemble(tags)
+ text="\n".join(parts)
  if _xlen(text)>278:
-  text=assemble(tags,title[:55].rstrip()+"...")
+  parts[1]=title[:58].rstrip()+"..."
+  text="\n".join(parts)
  while _xlen(text)>278 and len(tags)>2:
-  tags=tags[:-1]
-  text=assemble(tags,title[:48].rstrip()+"...")
+  tags=tags[:-1]; parts[-2]=" ".join(tags); text="\n".join(parts)
  if _xlen(text)>278:
-  text=assemble(tags,title[:34].rstrip()+"...")
+  parts[1]=title[:38].rstrip()+"..."; text="\n".join(parts)
  return text
 
 async def publish_text(text,image_url):
@@ -390,9 +388,14 @@ async def publish_one(force=False):
      continue
     c.execute("update offers set status='publishing' where id=?",(cand["id"],)); c.commit()
     try:
-     image_url=await make_deal_image(cand)
-     if not image_url: raise RuntimeError("تعذر إنشاء صورة العرض")
-     await publish_text(compose(cand),image_url)
+     asset=await prepare_deal_asset(cand)
+     post_offer=dict(cand)
+     post_offer["title"]=asset["title"]
+     await publish_text(compose(post_offer),asset["image_url"])
+    except ValueError as e:
+     c.execute("update offers set status='media_rejected' where id=?",(cand["id"],)); c.commit()
+     log("تم رفض صورة/صفحة غير مطابقة للمنتج: "+cand["title"]+" | "+str(e),"error")
+     continue
     except Exception as e:
      msg=str(e)
      if "already got this one scheduled or posted" in msg.lower() or "same thing twice" in msg.lower():
