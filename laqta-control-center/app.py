@@ -275,12 +275,12 @@ def offer_is_safe(o):
   return "shein." in url and "-p-" in url and code=="US3RU32" and bool(cp)
  return url.startswith("http")
 
-LIVE_TRENDS_URL="https://x.com/explore/tabs/trending"
+LIVE_TRENDS_URL="https://trends24.in/saudi-arabia/"
 TREND_CACHE={"at":0.0,"tags":[]}
 
 async def _live_saudi_trends():
  now=asyncio.get_running_loop().time()
- if TREND_CACHE["tags"] and now-TREND_CACHE["at"]<900:
+ if TREND_CACHE["tags"] and now-TREND_CACHE["at"]<300:
   return TREND_CACHE["tags"]
  try:
   headers={
@@ -291,34 +291,24 @@ async def _live_saudi_trends():
   async with httpx.AsyncClient(timeout=15,follow_redirects=True,headers=headers) as x:
    rr=await x.get(LIVE_TRENDS_URL)
    rr.raise_for_status()
-  page=html.unescape(rr.text).replace("\\/","/")
-  # Accept ONLY X's own trend-click search links. Never scan raw HTML for '#...'
-  # because CSS colors such as #fff are not trends.
-  links=[]
-  links.extend(re.findall(r"href=[\\\"']([^\\\"']*?/search\\?[^\\\"']+)[\\\"']",page,re.I))
-  links.extend(re.findall(r"[\\\"']url[\\\"']\\s*:\\s*[\\\"']([^\\\"']*?/search\\?[^\\\"']+)[\\\"']",page,re.I))
+  page=html.unescape(rr.text)
   tags=[]
-  for href in links:
-   try:
-    u=urllib.parse.urlparse(href)
-    qs=urllib.parse.parse_qs(u.query)
-    src=" ".join(qs.get("src",[])).lower()
-    vertical=" ".join(qs.get("vertical",[])).lower()
-    q=(qs.get("q") or [""])[0].strip()
-    # X marks Explore trend links with trend_click / trends.
-    if "trend" not in src and "trend" not in vertical:
-     continue
-    if not q.startswith("#"):
-     continue
-    item=q[1:].strip()
-    item=re.sub(r"[^\\w\\u0600-\\u06ff_]+","",item)
-    # Reject CSS/hex-looking junk and tiny parser artifacts.
-    if len(item)<2 or re.fullmatch(r"[0-9a-fA-F]{3,8}",item):
-     continue
-    t="#"+item
-    if t not in tags: tags.append(t)
-   except Exception:
+  # Trends24 lists trends as links to Twitter/X search. Only accept visible
+  # anchor text already written as a hashtag. Never scan raw CSS '#...'.
+  anchors=re.findall(r"<a[^>]+href=[\\\"']https?://(?:twitter\\.com|x\\.com)/[^\\\"']+[\\\"'][^>]*>(.*?)</a>",page,re.I|re.S)
+  for body in anchors:
+   label=re.sub(r"<[^>]+>"," ",body)
+   label=html.unescape(label)
+   label=re.sub(r"\\s+"," ",label).strip()
+   if not label.startswith("#"):
     continue
+   item=label[1:].strip()
+   item=re.sub(r"[^\\w\\u0600-\\u06ff_]+","",item)
+   if len(item)<2 or re.fullmatch(r"[0-9a-fA-F]{3,8}",item):
+    continue
+   t="#"+item
+   if t not in tags:
+    tags.append(t)
   TREND_CACHE["at"]=now
   TREND_CACHE["tags"]=tags[:80]
   return TREND_CACHE["tags"]
