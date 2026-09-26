@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ONYX Motion Studio</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div class="glow g1"></div><div class="glow g2"></div>
+<header>
+  <div class="brand"><span class="mark">O</span><div><b>ONYX</b><small>Motion Studio</small></div></div>
+  <div class="status" id="status">جاري فحص المحرك…</div>
+</header>
+
+<main>
+  <section class="hero">
+    <span class="eyebrow">AI VIDEO STUDIO</span>
+    <h1>صورتك. وصفك. <em>فيديوك.</em></h1>
+    <p>توليد فيديو من صورتك بوصف حر، تبديل وجه شخص محدد داخل أي فيديو، وفيديو ناطق — في واجهة واحدة.</p>
+  </section>
+
+  <nav class="tabs">
+    <button class="tab active" data-mode="image-to-video">صورة ← فيديو</button>
+    <button class="tab" data-mode="face-swap">تبديل الوجه</button>
+    <button class="tab" data-mode="talking-video">فيديو ناطق</button>
+  </nav>
+
+  <section class="workspace">
+    <div class="panel">
+      <div class="step"><i>01</i><div><b id="sourceTitle">ارفع صورتك</b><span id="sourceHint">صورة واضحة للوجه تعطي ثبات هوية أفضل.</span></div></div>
+      <label class="drop" id="sourceDrop">
+        <input id="source" type="file" accept="image/*,video/*,audio/*">
+        <strong>اضغط للاختيار أو اسحب الملف هنا</strong>
+        <span>PNG / JPG / MP4 / MOV / WAV</span>
+        <small id="sourceName"></small>
+      </label>
+
+      <div class="step"><i>02</i><div><b>صورة الهوية المرجعية</b><span>تُستخدم لتثبيت ملامحك أثناء التوليد أو الاستبدال.</span></div></div>
+      <label class="drop compact">
+        <input id="reference" type="file" accept="image/*">
+        <strong>أضف صورة مرجعية</strong>
+        <small id="refName"></small>
+      </label>
+
+      <div class="step"><i>03</i><div><b>اكتب ما تريده</b><span>الوصف حر — اكتب المشهد والحركة والكاميرا والإضاءة والملابس.</span></div></div>
+      <textarea id="prompt" placeholder="مثال: أمشي في شارع طوكيو وقت المطر، إضاءة سينمائية، الكاميرا تتبعني من الأمام بحركة بطيئة..."></textarea>
+
+      <div class="controls">
+        <label><span>المدة <b id="durLabel">10 ث</b></span><input id="duration" type="range" min="1" max="60" value="10"></label>
+        <label><span>ثبات الهوية <b id="idLabel">90%</b></span><input id="identity" type="range" min="0" max="100" value="90"></label>
+      </div>
+
+      <div class="chips">
+        <button data-prompt="إضاءة سينمائية واقعية، حركة كاميرا ناعمة، تفاصيل وجه طبيعية">سينمائي</button>
+        <button data-prompt="لقطة واقعية جدًا، حركة طبيعية للجسم والوجه، إضاءة ناعمة">واقعي</button>
+        <button data-prompt="مشهد ليلي تحت المطر، انعكاسات ضوئية، كاميرا تتحرك ببطء">ليل ممطر</button>
+      </div>
+
+      <button class="generate" id="generate">إنشاء المشروع <span>↗</span></button>
+      <p class="notice" id="notice"></p>
+    </div>
+
+    <aside>
+      <div class="preview">
+        <div class="scan"></div>
+        <div class="previewIcon">◉</div>
+        <b>المعاينة</b>
+        <span>بعد تجهيز المحرك ستظهر هنا معاينة قصيرة قبل الرندر الكامل.</span>
+      </div>
+      <div class="features">
+        <div><b>Identity Lock</b><span>تثبيت ملامح الوجه بين الفريمات</span></div>
+        <div><b>Multi-face Tracking</b><span>اختيار وتتبع شخص واحد داخل الفيديو</span></div>
+        <div><b>Long Video Extend</b><span>تمديد المقاطع الطويلة على مراحل</span></div>
+        <div><b>Face Refinement</b><span>تنظيف الحواف وتفاصيل الوجه بعد الرندر</span></div>
+      </div>
+    </aside>
+  </section>
+</main>
+<footer>ONYX Motion Studio · Private project build</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>
