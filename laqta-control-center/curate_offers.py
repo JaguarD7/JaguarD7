@@ -274,8 +274,7 @@ def probe_sources():
     tests = [
         ("shein","https://ar.shein.com/sale/"),
         ("amazon","https://www.amazon.sa/deals"),
-        ("temu","https://www.temu.com/"),
-        ("noon","https://www.noon.com/saudi-ar/")
+        ("temu","https://www.temu.com/")
     ]
     for name,u in tests:
         try:
@@ -284,18 +283,17 @@ def probe_sources():
                 raw=r.read()
             s=raw.decode("utf-8","ignore")
             print("PROBE",name,len(raw))
-            if name=="shein":
-                print("SHEIN_LINKS",re.findall(r'href=["\\\']([^"\\\']+-p-[^"\\\']+?\\.html[^"\\\']*)',s,re.I)[:5])
-                print("SHEIN_NAMES",re.findall(r'"goods_name"\\s*:\\s*"([^"]+)"',s,re.I)[:5])
-            elif name=="amazon":
-                print("AMAZON_ASIN",re.findall(r'data-asin=["\\\']([A-Z0-9]{10})["\\\']',s)[:10])
-                print("AMAZON_DP",re.findall(r'href=["\\\']([^"\\\']*/dp/[A-Z0-9]{10}[^"\\\']*)',s,re.I)[:5])
-            elif name=="temu":
-                print("TEMU_LINKS",re.findall(r'href=["\\\']([^"\\\']+-g-[^"\\\']+)',s,re.I)[:5])
-                print("TEMU_NAMES",re.findall(r'"goodsName"\\s*:\\s*"([^"]+)"',s,re.I)[:5])
-            elif name=="noon":
-                print("NOON_SKU",re.findall(r'"sku"\\s*:\\s*"([^"]+)"',s,re.I)[:5])
-                print("NOON_LINKS",re.findall(r'href=["\\\']([^"\\\']+/p/[^"\\\']+)',s,re.I)[:5])
+            if name=="amazon":
+                links=re.findall(r'href=["\\\']([^"\\\']*/dp/[A-Z0-9]{10}[^"\\\']*)',s,re.I)
+                print("AMAZON_DP",links[:3])
+                if links:
+                    needle=links[0].split("?")[0]
+                    pos=s.find(needle)
+                    snippet=txt(s[max(0,pos-1800):pos+2600])
+                    print("AMAZON_SNIP",snippet[:2500])
+            else:
+                for k in ["goods_id","goodsName","goods_name","productName","salePrice","retailPrice","product_url","goods_url_name","productId","product_id"]:
+                    print(name.upper()+"_KEY",k,s.count(k))
         except Exception as e:
             print("PROBE_FAIL",name,repr(e))
 
