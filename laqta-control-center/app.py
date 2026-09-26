@@ -40,7 +40,7 @@ def log(m,l="info"):
 def auth(r):
  if not r.session.get("ok"): raise HTTPException(401,"login_required")
 
-BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","buffer_channels_json","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand")
+BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","buffer_channels_json","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand","last_source")
 
 def canonical_offer_key(source,url,title=""):
  src=str(source or "").lower(); u=str(url or "").strip()
@@ -72,12 +72,13 @@ def product_key(title):
  sig=" ".join(toks[:14])
  return hashlib.sha256(sig.encode("utf-8","ignore")).hexdigest() if sig else ""
 
-PERMA_BLOCK_IDS={"N70105548V"}
+PERMA_BLOCK_IDS={"N70105548V","Z6D1792826D11C3DB6084Z"}
 def permanently_blocked(source,url,title):
  u=str(url or "").upper(); t=str(title or "").lower()
  if any(x in u for x in PERMA_BLOCK_IDS): return True
  # This exact iPhone offer has already been posted repeatedly; never enqueue it again.
  if "iphone 16" in t and "128gb" in t: return True
+ if ("mibru" in t or "فلاتر" in t) and "v60" in t: return True
  return False
 
 def build_encrypted_backup():
@@ -151,7 +152,7 @@ def init():
       c.execute("update offers set status='duplicate' where id=?",(r["id"],))
  except Exception:
   pass
- defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"15","max_day":"96","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
+ defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"15","max_day":"96","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA","last_source":""}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
 class Pwd(BaseModel): password:str
@@ -447,8 +448,10 @@ async def publish_one(force=False):
    c.close(); return "وصل الحد اليومي"
   try:
    while True:
-    cand=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
-    if not cand: return "لا توجد عروض موثقة جاهزة"
+    rows=c.execute("select * from offers where status='new' order by score desc, id asc limit 60").fetchall()
+    if not rows: return "لا توجد عروض موثقة جاهزة"
+    last_src=gs("last_source","").lower()
+    cand=next((r for r in rows if str(r["source"] or "").lower()!=last_src),rows[0])
     fp=cand["fingerprint_key"] or offer_fp(cand["source"],cand["url"],cand["title"])
     pk=product_key(cand["title"])
     already=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
@@ -484,7 +487,7 @@ async def publish_one(force=False):
     c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,))
     c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(fp,t))
     if pk: c.execute("insert or replace into product_history(product_key,fingerprint,title,posted_at) values(?,?,?,?)",(pk,fp,cand["title"],t))
-    c.commit(); ss("last_post",t); log("تم إرسال عرض موثق إلى Buffer: "+cand["title"]); return "تم"
+    c.commit(); ss("last_post",t); ss("last_source",str(cand["source"] or "").lower()); log("تم إرسال عرض موثق إلى Buffer: "+cand["title"]); return "تم"
   finally:
    c.close()
 
