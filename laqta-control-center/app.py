@@ -41,8 +41,15 @@ def auth(r):
 
 BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand")
 
+def offer_fp(source,url,title):
+ return hashlib.sha256(f"{source}|{url}|{title}".encode("utf-8","ignore")).hexdigest()
+
 def build_encrypted_backup():
- payload={k:gs(k,"") for k in BACKUP_KEYS}
+ c=con()
+ history=[dict(x) for x in c.execute("select fingerprint,posted_at from history order by posted_at desc limit 1000")]
+ counters=[dict(x) for x in c.execute("select day,posts from counters order by day desc limit 60")]
+ c.close()
+ payload={"settings":{k:gs(k,"") for k in BACKUP_KEYS},"history":history,"counters":counters}
  raw=json.dumps(payload,ensure_ascii=False,separators=(",",":")).encode()
  return CIPHER.encrypt(raw).decode()
 
@@ -54,13 +61,22 @@ async def restore_backup():
   obj=rr.json(); token=str(obj.get("ciphertext","")).strip()
   if not token: return False
   payload=json.loads(CIPHER.decrypt(token.encode()).decode())
+  settings=payload.get("settings",payload)
   for k in BACKUP_KEYS:
-   if k in payload: ss(k,payload[k])
+   if k in settings: ss(k,settings[k])
+  c=con()
+  for h in payload.get("history",[]):
+   if h.get("fingerprint"):
+    c.execute("insert or ignore into history(fingerprint,posted_at) values(?,?)",(h["fingerprint"],h.get("posted_at","")))
+  for n in payload.get("counters",[]):
+   if n.get("day"):
+    c.execute("insert into counters(day,posts) values(?,?) on conflict(day) do update set posts=excluded.posts",(n["day"],int(n.get("posts",0))))
+  c.commit(); c.close()
   return True
  except Exception:
   return False
 def init():
- c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '',score integer default 0);create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);""")
+ c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '',score integer default 0);create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);create table if not exists history(fingerprint text primary key,posted_at text);""")
  try:
   cols=[r["name"] for r in c.execute("pragma table_info(offers)").fetchall()]
   if "score" not in cols: c.execute("alter table offers add column score integer default 0")
@@ -78,6 +94,8 @@ class Source(BaseModel): name:str; url:str
 async def up():
  init()
  await restore_backup()
+ if gs("buffer_key") and gs("buffer_channel"):
+  ss("automation","1")
  asyncio.create_task(loop())
 @app.get("/",response_class=HTMLResponse)
 async def home(): return (BASE/"static/index.html").read_text(encoding="utf-8")
@@ -211,7 +229,7 @@ async def publish_one(force=False):
  o=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
  if not o: c.close(); return "لا توجد عروض جاهزة"
  try:
-  await publish_text(compose(o)); t=now.isoformat(timespec="seconds"); c.execute("update offers set status='posted',posted_at=? where id=?",(t,o["id"])); c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,)); c.commit(); ss("last_post",t); log("تم إرسال عرض إلى Buffer: "+o["title"]); return "تم"
+  await publish_text(compose(o)); t=now.isoformat(timespec="seconds"); c.execute("update offers set status='posted',posted_at=? where id=?",(t,o["id"])); c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,)); c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(offer_fp(o["source"],o["url"],o["title"]),t)); c.commit(); ss("last_post",t); log("تم إرسال عرض إلى Buffer: "+o["title"]); return "تم"
  finally:c.close()
 @app.post("/api/start")
 async def start(r:Request):
@@ -258,10 +276,14 @@ async def import_curated():
    title=re.sub(r"\s+"," ",str(it.get("title",""))).strip()
    url=str(it.get("url","")).strip()
    if not title or not url or int(it.get("score",0))<5: continue
-   c=con(); ex=c.execute("select 1 from offers where url=? or title=?",(url,title)).fetchone()
-   if not ex:
+   src=str(it.get("source","auto"))
+   fp=offer_fp(src,url,title)
+   c=con()
+   ex=c.execute("select 1 from offers where url=? or title=?",(url,title)).fetchone()
+   done=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
+   if not ex and not done:
     c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score) values(?,?,?,?,?,?,?,?,?)",
-      (title,str(it.get("current_price","")),str(it.get("old_price","")),str(it.get("code","")),url,str(it.get("source","auto")),"new",datetime.now(TZ).isoformat(timespec="seconds"),int(it.get("score",0))))
+      (title,str(it.get("current_price","")),str(it.get("old_price","")),str(it.get("code","")),url,src,"new",datetime.now(TZ).isoformat(timespec="seconds"),int(it.get("score",0))))
     c.commit(); added+=1
    c.close()
  except Exception as e:
