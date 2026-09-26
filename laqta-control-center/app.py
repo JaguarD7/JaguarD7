@@ -333,19 +333,25 @@ async def _relevant_live_trend_tags(title,src,max_tags=2):
   low=t.lower()
   if any(w.lower() in low for w in TREND_BLOCK_WORDS):
    continue
-  safe.append(t)
- # Prefer a genuinely relevant trend if one exists.
- relevant=[t for t in safe if _trend_relevant(title,src,t)]
+  if t not in safe:
+   safe.append(t)
+ if not safe:
+  return []
+ # Always aim for at least two live Saudi trends when Trends24 exposes them.
  out=[]
+ relevant=[t for t in safe if _trend_relevant(title,src,t)]
  for t in relevant:
   if t not in out:
    out.append(t)
-   if len(out)>=max_tags: return out
- # Otherwise rotate through current Saudi trends so every post carries a live trend tag.
- if safe:
-  seed=(sum(map(ord,str(title or "")))+datetime.now(TZ).minute)//15
-  t=safe[seed % len(safe)]
-  if t not in out: out.append(t)
+   if len(out)>=max_tags:
+    return out[:max_tags]
+ seed=(sum(map(ord,str(title or "")))+datetime.now(TZ).minute)//15
+ for i in range(len(safe)):
+  t=safe[(seed+i)%len(safe)]
+  if t not in out:
+   out.append(t)
+   if len(out)>=max_tags:
+    break
  return out[:max_tags]
 
 def _hashtags(title,src,raw=""):
