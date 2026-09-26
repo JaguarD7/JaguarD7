@@ -12,6 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 BASE=Path(__file__).resolve().parent
 DB=BASE/"laqta.db"; SEC=BASE/".laqta_secret"; TZ=ZoneInfo("Asia/Riyadh")
 CURATED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/curated_offers.json"
+ASSISTANT_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/assistant_offers.json"
 BACKUP_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/runtime_backup.json"
 CRON_TOKEN=os.getenv("LAQTA_CRON_TOKEN","")
 MASTER_PHRASE=os.getenv("LAQTA_MASTER_PHRASE","").encode()
@@ -269,7 +270,8 @@ def offer_is_safe(o):
   if url==GENERIC_TEMU: return False
   return ("temu.to/k/" in url or "temu.com" in url) and code=="alr408026" and bool(cp)
  if "shein" in src:
-  if url==GENERIC_SHEIN: return False
+  if url==GENERIC_SHEIN:
+   return code=="US3RU32" and not cp and any(k in title.lower() for k in ("shein","شي ان","شي إن","عروض"))
   return "shein." in url and "-p-" in url and code=="US3RU32" and bool(cp)
  return url.startswith("http")
 
@@ -448,10 +450,18 @@ async def publish_one(force=False):
    c.close(); return "وصل الحد اليومي"
   try:
    while True:
-    rows=c.execute("select * from offers where status='new' order by score desc, id asc limit 60").fetchall()
+    rows=c.execute("select * from offers where status='new' order by score desc, id asc limit 100").fetchall()
     if not rows: return "لا توجد عروض موثقة جاهزة"
     last_src=gs("last_source","").lower()
-    cand=next((r for r in rows if str(r["source"] or "").lower()!=last_src),rows[0])
+    cycle=["noon","amazon","shein","temu"]
+    try: start_i=(cycle.index(last_src)+1)%len(cycle)
+    except: start_i=0
+    cand=None
+    for off in range(len(cycle)):
+     want=cycle[(start_i+off)%len(cycle)]
+     cand=next((r for r in rows if str(r["source"] or "").lower()==want),None)
+     if cand: break
+    if cand is None: cand=rows[0]
     fp=cand["fingerprint_key"] or offer_fp(cand["source"],cand["url"],cand["title"])
     pk=product_key(cand["title"])
     already=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
@@ -534,16 +544,38 @@ async def delsource(sid:int,r:Request):
 async def import_curated():
  added=0
  try:
+  merged=[]
   async with httpx.AsyncClient(timeout=20,follow_redirects=True) as x:
-   rr=await x.get(CURATED_URL,headers={"User-Agent":"LAQTA-Control/1.0"})
-   rr.raise_for_status(); data=rr.json()
-  items=sorted(data.get("offers",[]),key=lambda z:int(z.get("score",0)),reverse=True)
+   for feed_url in (CURATED_URL,ASSISTANT_URL):
+    try:
+     rr=await x.get(feed_url,headers={"User-Agent":"LAQTA-Control/1.0"})
+     rr.raise_for_status()
+     merged.extend((rr.json() or {}).get("offers",[]))
+    except Exception as e:
+     log("تعذر تحميل مصدر عروض: "+str(e),"error")
+  bysrc={}
+  for it in merged:
+   src=str(it.get("source","auto")).lower().strip()
+   bysrc.setdefault(src,[]).append(it)
+  for src in bysrc:
+   bysrc[src].sort(key=lambda z:int(z.get("score",0)),reverse=True)
+  items=[]
+  order=("noon","amazon","shein","temu")
+  maxlen=max([len(bysrc.get(s,[])) for s in order]+[0])
+  for i in range(maxlen):
+   for src in order:
+    arr=bysrc.get(src,[])
+    if i<len(arr): items.append(arr[i])
+  for src,arr in bysrc.items():
+   if src not in order: items.extend(arr)
+
   for it in items:
    title=re.sub(r"\s+"," ",str(it.get("title",""))).strip()
    url=str(it.get("url","")).strip()
-   if not title or not url or int(it.get("score",0))<8: continue
-   if url in (GENERIC_NOON,GENERIC_TEMU,GENERIC_SHEIN): continue
-   src=str(it.get("source","auto"))
+   if not title or not url or int(it.get("score",0))<6: continue
+   src=str(it.get("source","auto")).lower().strip()
+   if url in (GENERIC_NOON,GENERIC_TEMU): continue
+   if url==GENERIC_SHEIN and src!="shein": continue
    if permanently_blocked(src,url,title): continue
    fp=offer_fp(src,url,title); pk=product_key(title)
    c=con()
