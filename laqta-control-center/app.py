@@ -105,11 +105,28 @@ def init():
   if "fingerprint_key" not in cols: c.execute("alter table offers add column fingerprint_key text default ''")
  except: pass
  try:
-  rows=c.execute("select id,source,url,title,fingerprint_key from offers").fetchall()
+  rows=c.execute("select id,source,url,title,status,score,posted_at,fingerprint_key from offers order by id asc").fetchall()
+  groups={}
   for r in rows:
+   fp=r["fingerprint_key"] or offer_fp(r["source"],r["url"],r["title"])
    if not r["fingerprint_key"]:
-    c.execute("update offers set fingerprint_key=? where id=?",(offer_fp(r["source"],r["url"],r["title"]),r["id"]))
- except: pass
+    c.execute("update offers set fingerprint_key=? where id=?",(fp,r["id"]))
+   groups.setdefault(fp,[]).append(r)
+   if r["status"]=="posted":
+    c.execute("insert or ignore into history(fingerprint,posted_at) values(?,?)",(fp,r["posted_at"] or datetime.now(TZ).isoformat(timespec="seconds")))
+  for fp,items in groups.items():
+   posted=[r for r in items if r["status"]=="posted"]
+   if posted:
+    for r in items:
+     if r["status"]!="posted":
+      c.execute("update offers set status='duplicate' where id=?",(r["id"],))
+   elif len(items)>1:
+    keep=sorted(items,key=lambda r:(-int(r["score"] or 0),r["id"]))[0]["id"]
+    for r in items:
+     if r["id"]!=keep and r["status"] in ("new","publishing"):
+      c.execute("update offers set status='duplicate' where id=?",(r["id"],))
+ except Exception:
+  pass
  defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"30","max_day":"48","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
@@ -360,8 +377,10 @@ async def publish_one(force=False):
    while True:
     cand=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
     if not cand: return "لا توجد عروض موثقة جاهزة"
-    fp=offer_fp(cand["source"],cand["url"],cand["title"])
+    fp=cand["fingerprint_key"] or offer_fp(cand["source"],cand["url"],cand["title"])
     already=c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone()
+    if not already:
+     already=c.execute("select 1 from offers where fingerprint_key=? and status='posted' and id<>?",(fp,cand["id"])).fetchone()
     if already:
      c.execute("update offers set status='duplicate' where id=?",(cand["id"],)); c.commit()
      continue
@@ -413,7 +432,12 @@ async def offers(r:Request):
  auth(r); c=con(); a=[dict(x) for x in c.execute("select * from offers order by id desc limit 100")]; c.close(); return a
 @app.post("/api/offers")
 async def addoffer(p:Offer,r:Request):
- auth(r); c=con(); fp=offer_fp(p.source,p.url,p.title); c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags,fingerprint_key) values(?,?,?,?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"),0,p.tags,fp)); c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
+ auth(r)
+ fp=offer_fp(p.source,p.url,p.title); c=con()
+ if c.execute("select 1 from history where fingerprint=?",(fp,)).fetchone() or c.execute("select 1 from offers where fingerprint_key=?",(fp,)).fetchone():
+  c.close(); return {"ok":1,"duplicate":True}
+ c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score,tags,fingerprint_key) values(?,?,?,?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"),0,p.tags,fp))
+ c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
 @app.delete("/api/offers/{oid}")
 async def deloffer(oid:int,r:Request):
  auth(r); c=con(); c.execute("delete from offers where id=?",(oid,)); c.commit(); c.close(); return {"ok":1}
