@@ -19,9 +19,15 @@ app.mount("/outputs", StaticFiles(directory=UPLOADS), name="outputs")
 
 JOBS: dict[str, dict] = {}
 FREE_ENGINES = [
+    # Same-schema Wan 2.2 mirrors. Router health-checks them at request time.
     {"name": "Wan 2.2 14B Fast", "space": "zerogpu-aoti/wan2-2-fp8da-aoti-faster", "api": "/generate_video"},
-    {"name": "Wan 2.2 14B Preview", "space": "r3gm/Wan2.2-14B-Preview", "api": "/generate_video"},
-    {"name": "Wan 2.2 14B Fast Preview", "space": "kulkas2pintu/Wan2.2-14B-Fast-Preview", "api": "/generate_video"},
+    {"name": "Wan 2.2 Fast Preview", "space": "kulkas2pintu/Wan2.2-14B-Fast-Preview", "api": "/generate_video"},
+    {"name": "Wan 2.2 Preview", "space": "r3gm/Wan2.2-14B-Preview", "api": "/generate_video"},
+    {"name": "Wan 2.2 Slow Preview", "space": "r3gm/Wan2.2-14B-Slow-Preview", "api": "/generate_video"},
+    {"name": "Wan 2.2 Lightning", "space": "vml12/Wan2.2-I2V-14B-Lightning-Fast-Preview", "api": "/generate_video"},
+    {"name": "Wan 2.2 Lightning 4-8 Step", "space": "Saravutw/WAN2.2-I2V-LIGHTNING-Video-4-8step", "api": "/generate_video"},
+    {"name": "Wan 2.2 Fast Alt", "space": "Rchoks/Wan2.2-14B-Fast-Preview", "api": "/generate_video"},
+    {"name": "Wan 2.2 Fast Alt 2", "space": "sdfdsfsf32e3/Wan2.2-14B-Fast-Preview", "api": "/generate_video"},
 ]
 ENGINE_COOLDOWNS: dict[str, float] = {}
 
@@ -52,6 +58,8 @@ def capabilities():
         "video_face_swap": {"available": False, "status": "coming_next"},
         "talking_video": {"available": False, "status": "coming_next"},
         "provider_configured": True,
+        "router_engines": len(FREE_ENGINES),
+        "router_ready": sum(1 for e in FREE_ENGINES if ENGINE_COOLDOWNS.get(e["space"], 0) <= __import__("time").time()),
     }
 
 def normalize_arabic_prompt(raw: str) -> str:
