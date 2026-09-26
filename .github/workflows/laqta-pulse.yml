@@ -9,10 +9,26 @@ on:
     paths:
       - ".github/workflows/laqta-pulse.yml"
 
+permissions:
+  contents: write
+
 jobs:
   pulse:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: laqta-feed
+          fetch-depth: 0
       - name: Wake LAQTA and publish if due
         run: |
-          curl -fsS --retry 3 --retry-delay 10 -X POST https://laqta-control-center.onrender.com/api/pulse
+          curl -fsS --retry 5 --retry-delay 12 -X POST https://laqta-control-center.onrender.com/api/pulse
+      - name: Save encrypted runtime backup
+        run: |
+          curl -fsS --retry 5 --retry-delay 12 https://laqta-control-center.onrender.com/api/backup -o laqta-control-center/runtime_backup.json
+          python -m json.tool laqta-control-center/runtime_backup.json > /dev/null
+          git config user.name "LAQTA Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add laqta-control-center/runtime_backup.json
+          git diff --cached --quiet || git commit -m "Backup LAQTA runtime"
+          git push origin HEAD:laqta-feed
