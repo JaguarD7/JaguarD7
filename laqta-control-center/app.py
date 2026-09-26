@@ -9,7 +9,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
-from deal_image import prepare_deal_asset, MEDIA_DIR
 BASE=Path(__file__).resolve().parent
 DB=BASE/"laqta.db"; SEC=BASE/".laqta_secret"; TZ=ZoneInfo("Asia/Riyadh")
 CURATED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/curated_offers.json"
@@ -26,7 +25,6 @@ app=FastAPI(title="LAQTA Control Center")
 PUBLISH_LOCK=asyncio.Lock()
 app.add_middleware(SessionMiddleware,secret_key=hashlib.sha256(RAW+b"session").hexdigest(),max_age=2592000)
 app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
-app.mount("/media",StaticFiles(directory=MEDIA_DIR),name="media")
 def con():
  x=sqlite3.connect(DB,check_same_thread=False); x.row_factory=sqlite3.Row; return x
 def gs(k,d=""):
@@ -357,7 +355,7 @@ def compose(o):
   parts[1]=title[:38].rstrip()+"..."; text="\n".join(parts)
  return text
 
-async def publish_text(text,image_url):
+async def publish_text(text):
  if not gs("buffer_channel"):
   await discover()
  try:
@@ -379,8 +377,7 @@ async def publish_text(text,image_url):
  errors=[]
  for cid in ids:
   try:
-   inp={"text":text,"channelId":cid,"schedulingType":"automatic","mode":mode,
-        "assets":[{"image":{"url":image_url}}]}
+   inp={"text":text,"channelId":cid,"schedulingType":"automatic","mode":mode}
    d=await bgql(q,{"input":inp})
    result=d.get("createPost") or {}
    if result.get("message"): raise RuntimeError(result.get("message"))
@@ -418,14 +415,7 @@ async def publish_one(force=False):
      continue
     c.execute("update offers set status='publishing' where id=?",(cand["id"],)); c.commit()
     try:
-     asset=await prepare_deal_asset(cand)
-     post_offer=dict(cand)
-     post_offer["title"]=asset["title"]
-     await publish_text(compose(post_offer),asset["image_url"])
-    except ValueError as e:
-     c.execute("update offers set status='media_rejected' where id=?",(cand["id"],)); c.commit()
-     log("تم رفض صورة/صفحة غير مطابقة للمنتج: "+cand["title"]+" | "+str(e),"error")
-     continue
+     await publish_text(compose(cand))
     except Exception as e:
      msg=str(e)
      if "already got this one scheduled or posted" in msg.lower() or "same thing twice" in msg.lower():
