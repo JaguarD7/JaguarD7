@@ -5,6 +5,11 @@ const tabs=$$(".tab");
 const prompt=$("#prompt");
 const sourceTitle=$("#sourceTitle");
 const sourceHint=$("#sourceHint");
+let localDevice={webgpu:false,mobile:/iPhone|iPad|Android/i.test(navigator.userAgent),memory:navigator.deviceMemory||null};
+async function detectLocalCompute(){
+  try{ localDevice.webgpu=!!navigator.gpu && !!(await navigator.gpu.requestAdapter()); }catch{}
+}
+detectLocalCompute();
 
 const configs={
   "image-to-video":{
@@ -32,6 +37,17 @@ tabs.forEach(t=>t.addEventListener("click",()=>{
   sourceTitle.textContent=c.title;
   sourceHint.textContent=c.hint;
   prompt.placeholder=c.placeholder;
+  const refField=$("#reference").closest(".field");
+  const generate=$("#generate span");
+  const notice=$("#notice");
+  if(mode==="face-swap"){
+    refField.querySelector(".field-head span").textContent="REQUIRED";
+    generate.textContent="Swap face on device";
+    notice.textContent="On-device Identity Lab · video stays on this device where supported.";
+  }else{
+    refField.querySelector(".field-head span").textContent="OPTIONAL";
+    generate.textContent=mode==="image-to-video"?"Generate motion":"Generate";
+  }
 }));
 
 $("#duration").addEventListener("input",e=>$("#durLabel").textContent=e.target.value+"s");
@@ -105,6 +121,17 @@ $("#generate").addEventListener("click",async()=>{
   if($("#reference").files[0])f.append("reference",$("#reference").files[0]);
 
   const notice=$("#notice");
+  if(mode==="face-swap"){
+    const video=$("#source").files[0], face=$("#reference").files[0];
+    if(!video || !video.type.startsWith("video/")){ notice.textContent="Identity Lab needs a source video."; return; }
+    if(!face || !face.type.startsWith("image/")){ notice.textContent="Add the replacement face image."; return; }
+    if(!localDevice.webgpu){
+      notice.textContent="This browser does not expose WebGPU for local face processing. Desktop Chrome/Edge support will be used first; mobile fallback is being connected.";
+      return;
+    }
+    notice.textContent=(localDevice.mobile?"Mobile":"Desktop")+" local GPU detected · preparing on-device face engine…";
+    return;
+  }
   if(mode==="image-to-video"&&!$("#source").files[0]){
     notice.textContent="Upload an image first.";
     return;
