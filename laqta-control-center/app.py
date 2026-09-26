@@ -1,4 +1,4 @@
-import asyncio, os, sqlite3, re, secrets, hashlib, base64
+import asyncio, os, sqlite3, re, secrets, hashlib, base64, json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,9 +12,15 @@ from starlette.middleware.sessions import SessionMiddleware
 BASE=Path(__file__).resolve().parent
 DB=BASE/"laqta.db"; SEC=BASE/".laqta_secret"; TZ=ZoneInfo("Asia/Riyadh")
 CURATED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/curated_offers.json"
+BACKUP_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/runtime_backup.json"
 CRON_TOKEN=os.getenv("LAQTA_CRON_TOKEN","")
-if not SEC.exists(): SEC.write_bytes(secrets.token_bytes(32))
-RAW=SEC.read_bytes(); CIPHER=Fernet(base64.urlsafe_b64encode(hashlib.sha256(RAW).digest()))
+MASTER_PHRASE=os.getenv("LAQTA_MASTER_PHRASE","").encode()
+if MASTER_PHRASE:
+ RAW=hashlib.sha256(MASTER_PHRASE).digest()
+else:
+ if not SEC.exists(): SEC.write_bytes(secrets.token_bytes(32))
+ RAW=SEC.read_bytes()
+CIPHER=Fernet(base64.urlsafe_b64encode(hashlib.sha256(RAW).digest()))
 app=FastAPI(title="LAQTA Control Center")
 app.add_middleware(SessionMiddleware,secret_key=hashlib.sha256(RAW+b"session").hexdigest(),max_age=2592000)
 app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
@@ -32,6 +38,27 @@ def log(m,l="info"):
  c=con(); c.execute("insert into activity(level,message,created_at) values(?,?,?)",(l,m,datetime.now(TZ).isoformat(timespec="seconds"))); c.commit(); c.close()
 def auth(r):
  if not r.session.get("ok"): raise HTTPException(401,"login_required")
+
+BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand")
+
+def build_encrypted_backup():
+ payload={k:gs(k,"") for k in BACKUP_KEYS}
+ raw=json.dumps(payload,ensure_ascii=False,separators=(",",":")).encode()
+ return CIPHER.encrypt(raw).decode()
+
+async def restore_backup():
+ try:
+  async with httpx.AsyncClient(timeout=15,follow_redirects=True) as x:
+   rr=await x.get(BACKUP_URL,headers={"User-Agent":"LAQTA-Control/1.0"})
+  if rr.status_code!=200: return False
+  obj=rr.json(); token=str(obj.get("ciphertext","")).strip()
+  if not token: return False
+  payload=json.loads(CIPHER.decrypt(token.encode()).decode())
+  for k in BACKUP_KEYS:
+   if k in payload: ss(k,payload[k])
+  return True
+ except Exception:
+  return False
 def init():
  c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '',score integer default 0);create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);""")
  try:
@@ -48,7 +75,10 @@ class Offer(BaseModel):
  title:str; current_price:str=""; old_price:str=""; code:str=""; url:str=""; source:str="manual"
 class Source(BaseModel): name:str; url:str
 @app.on_event("startup")
-async def up(): init(); asyncio.create_task(loop())
+async def up():
+ init()
+ await restore_backup()
+ asyncio.create_task(loop())
 @app.get("/",response_class=HTMLResponse)
 async def home(): return (BASE/"static/index.html").read_text(encoding="utf-8")
 @app.get("/api/bootstrap")
@@ -259,6 +289,10 @@ async def scan():
  log(f"فحص المصادر: تمت إضافة {added} عناصر"); return added
 @app.post("/api/scan")
 async def scanapi(r:Request): auth(r); return {"ok":1,"added":await scan()}
+
+@app.get("/api/backup")
+async def public_backup():
+ return {"ciphertext":build_encrypted_backup(),"updated_at":datetime.now(TZ).isoformat(timespec="seconds")}
 
 @app.post("/api/pulse")
 async def public_pulse():
