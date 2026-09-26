@@ -271,29 +271,20 @@ def build():
     return {"generated_at": now, "offers": out}
 
 def probe_sources():
-    tests = [
+    tests=[
         ("shein","https://ar.shein.com/sale/"),
-        ("amazon","https://www.amazon.sa/deals"),
         ("temu","https://www.temu.com/")
     ]
     for name,u in tests:
         try:
             req=urllib.request.Request(u,headers=UA)
             with urllib.request.urlopen(req,timeout=25) as r:
-                raw=r.read()
-            s=raw.decode("utf-8","ignore")
-            print("PROBE",name,len(raw))
-            if name=="amazon":
-                links=re.findall(r'href=["\\\']([^"\\\']*/dp/[A-Z0-9]{10}[^"\\\']*)',s,re.I)
-                print("AMAZON_DP",links[:3])
-                if links:
-                    needle=links[0].split("?")[0]
-                    pos=s.find(needle)
-                    snippet=txt(s[max(0,pos-1800):pos+2600])
-                    print("AMAZON_SNIP",snippet[:2500])
-            else:
-                for k in ["goods_id","goodsName","goods_name","productName","salePrice","retailPrice","product_url","goods_url_name","productId","product_id"]:
-                    print(name.upper()+"_KEY",k,s.count(k))
+                s=r.read().decode("utf-8","ignore")
+            key="goods_id" if name=="shein" else "goodsName"
+            pos=s.find(key)
+            print("PROBE",name,len(s),"POS",pos)
+            if pos>=0:
+                print(name.upper()+"_SNIP",s[max(0,pos-500):pos+1800].replace("\n"," ")[:2300])
         except Exception as e:
             print("PROBE_FAIL",name,repr(e))
 
