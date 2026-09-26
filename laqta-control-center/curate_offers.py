@@ -224,7 +224,7 @@ def temu_direct_deals(now):
         gid,name_raw=m.group(1),m.group(2)
         if gid in seen: continue
         seen.add(gid)
-        name=name_raw.replace("\\u002F","/").replace("\\u0026","&").replace("\\"","\"")
+        name=name_raw.replace("\\u002F","/").replace("\\u0026","&").replace("\\u0022",'"')
         if any(k.lower() in name.lower() for k in bad): continue
         chunk=s[m.start():m.start()+7000]
         currency=re.search(r'"currency":"([^"]+)"',chunk)
