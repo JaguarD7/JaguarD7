@@ -71,6 +71,8 @@ def direct_prompt(prompt: str) -> str:
 
 def run_wan(job_id: str, source_path: Path, prompt: str, duration: int):
     job = JOBS[job_id]
+    enhanced_prompt = direct_prompt(prompt)
+    job["directed_prompt"] = enhanced_prompt
     try:
         job["status"] = "connecting"
         job["progress"] = 8
