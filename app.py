@@ -49,6 +49,26 @@ def capabilities():
         "provider_configured": True,
     }
 
+def direct_prompt(prompt: str) -> str:
+    raw = (prompt or "").strip()
+    if not raw:
+        return "cinematic natural motion, realistic body movement, subtle expression, smooth camera motion, preserve subject identity"
+    low = raw.lower()
+    parts = [raw]
+    if any(w in low for w in ["wear", "dress", "outfit", "bikini", "clothes", "clothing"]):
+        parts.append("clearly apply the requested wardrobe change to the subject from the first frame, coherent fabric and anatomy")
+    if any(w in low for w in ["dance", "dancing", "رقص", "ارقص", "رقصني"]):
+        parts.append("full-body rhythmic dancing, coordinated arms, hips and footwork, natural weight shifts, continuous energetic motion")
+    if any(w in low for w in ["walk", "walking", "run", "running"]):
+        parts.append("clear full-body locomotion with realistic steps and natural limb coordination")
+    parts += [
+        "preserve the same person's facial identity and recognizable features",
+        "realistic anatomy, consistent clothing and body across frames",
+        "cinematic lighting, detailed skin, stable temporal consistency",
+        "smooth coherent motion, no frozen pose, no abrupt morphing"
+    ]
+    return ", ".join(parts)
+
 def run_wan(job_id: str, source_path: Path, prompt: str, duration: int):
     job = JOBS[job_id]
     try:
@@ -63,7 +83,7 @@ def run_wan(job_id: str, source_path: Path, prompt: str, duration: int):
         # Public ZeroGPU Wan 2.2 space. ZeroGPU can queue or throttle free users.
         result = client.predict(
             input_image=handle_file(str(source_path)),
-            prompt=prompt or "make this image come alive, cinematic motion, smooth natural animation",
+            prompt=enhanced_prompt,
             steps=6,
             negative_prompt="low quality, blurry, distorted anatomy, extra fingers, deformed face, static frame, subtitles, watermark",
             duration_seconds=float(max(0.5, min(duration, 5))),
