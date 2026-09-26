@@ -21,7 +21,8 @@ else:
  if not SEC.exists(): SEC.write_bytes(secrets.token_bytes(32))
  RAW=SEC.read_bytes()
 CIPHER=Fernet(base64.urlsafe_b64encode(hashlib.sha256(RAW).digest()))
-app=FastAPI(title="LAQTA Control Center")\nPUBLISH_LOCK=asyncio.Lock()
+app=FastAPI(title="LAQTA Control Center")
+PUBLISH_LOCK=asyncio.Lock()
 app.add_middleware(SessionMiddleware,secret_key=hashlib.sha256(RAW+b"session").hexdigest(),max_age=2592000)
 app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
 def con():
