@@ -179,56 +179,102 @@ async def _product_meta(page_url, offer_title, source):
 
 def _bg(w,h,variant):
     palettes=[
-        ((2,22,18),(9,55,45)),((8,16,29),(17,48,70)),((25,14,8),(69,41,20)),
-        ((9,9,12),(43,38,30)),((6,28,23),(27,62,50)),((23,10,26),(61,27,56))
+        ((2,24,20),(10,63,51)),
+        ((8,18,27),(18,54,65)),
+        ((29,18,10),(78,51,26)),
+        ((14,14,16),(52,44,30)),
+        ((7,31,25),(36,74,57)),
     ]
     a,b=palettes[variant%len(palettes)]
-    img=Image.new("RGB",(w,h)); px=img.load()
+    img=Image.new("RGB",(w,h))
+    px=img.load()
     for y in range(h):
         for x in range(w):
-            t=(x+y)/(w+h); px[x,y]=tuple(int(a[i]*(1-t)+b[i]*t) for i in range(3))
+            t=(0.7*x+0.3*y)/(0.7*w+0.3*h)
+            px[x,y]=tuple(int(a[i]*(1-t)+b[i]*t) for i in range(3))
     return img.convert("RGBA")
 
 def _measure(draw,text,font):
     return draw.textlength(_display(text),font=font)
 
-def _wrap(draw,text,font,max_width,max_lines=3):
+def _wrap(draw,text,font,max_width,max_lines=2):
     text=re.sub(r"\s+"," ",str(text or "")).strip()
     words=text.split(); lines=[]; cur=""
     for word in words:
         test=(cur+" "+word).strip()
-        if _measure(draw,test,font)<=max_width: cur=test
+        if _measure(draw,test,font)<=max_width:
+            cur=test
         else:
             if cur: lines.append(cur)
             cur=word
             if len(lines)>=max_lines-1: break
     if cur and len(lines)<max_lines: lines.append(cur)
     if len(" ".join(lines))<len(text) and lines:
-        while _measure(draw,lines[-1]+"...",font)>max_width and len(lines[-1])>4: lines[-1]=lines[-1][:-1]
+        while _measure(draw,lines[-1]+"...",font)>max_width and len(lines[-1])>4:
+            lines[-1]=lines[-1][:-1]
         lines[-1]=lines[-1].rstrip()+"..."
     return lines or [""]
 
 def _text(draw,xy,text,font,fill,anchor=None):
     draw.text(xy,_display(text),font=font,fill=fill,anchor=anchor)
 
-def _paste_product(canvas,product,box):
-    x1,y1,x2,y2=box; size=(x2-x1,y2-y1)
-    bg=Image.new("RGBA",size,(249,248,244,255))
-    product=ImageOps.contain(product,(size[0]-32,size[1]-32),method=Image.Resampling.LANCZOS)
-    bg.alpha_composite(product,((size[0]-product.width)//2,(size[1]-product.height)//2))
-    mask=Image.new("L",size,0); d=ImageDraw.Draw(mask); d.rounded_rectangle((0,0,size[0]-1,size[1]-1),radius=30,fill=255)
-    canvas.paste(bg,(x1,y1),mask)
+def _clean_title(title):
+    t=re.sub(r"\s+"," ",str(title or "")).strip()
+    t=re.sub(r"\s*[-|]\s*(?:Amazon|Noon|SHEIN|Temu|السعودية).*$","",t,flags=re.I)
+    t=re.sub(r"\s+(?:with FaceTime|Middle East Version|نسخة الشرق الأوسط|مع FaceTime).*$","",t,flags=re.I)
+    return t[:110].rstrip(" ,-")
 
-def _brand(draw,W,gold,white,dark,variant,store):
-    if variant%2:
-        draw.rounded_rectangle((46,35,245,91),radius=28,fill=(255,255,255,15),outline=gold,width=1)
-        _text(draw,(72,47),"LAQTA",_font(31,True),white)
-    else:
-        draw.ellipse((52,43,88,79),fill=gold); draw.polygon([(59,55),(69,48),(82,58),(70,71)],fill=dark)
-        _text(draw,(104,39),"LAQTA",_font(34,True),white)
-    bw=max(125,int(draw.textlength(store,font=_font(18,True)))+44)
-    draw.rounded_rectangle((W-bw-48,42,W-48,86),radius=20,fill=(255,255,255,14),outline=gold,width=1)
-    _text(draw,(W-bw-25,53),store,_font(18,True),gold)
+def _card(canvas,box,fill=(250,248,241,255),radius=32,shadow=True):
+    x1,y1,x2,y2=box
+    if shadow:
+        sh=Image.new("RGBA",canvas.size,(0,0,0,0))
+        sd=ImageDraw.Draw(sh)
+        sd.rounded_rectangle((x1+10,y1+14,x2+10,y2+14),radius=radius,fill=(0,0,0,75))
+        sh=sh.filter(ImageFilter.GaussianBlur(14))
+        canvas.alpha_composite(sh)
+    layer=Image.new("RGBA",canvas.size,(0,0,0,0))
+    d=ImageDraw.Draw(layer)
+    d.rounded_rectangle(box,radius=radius,fill=fill)
+    canvas.alpha_composite(layer)
+
+def _paste_product(canvas,product,box,pad=24):
+    x1,y1,x2,y2=box
+    size=(x2-x1,y2-y1)
+    stage=Image.new("RGBA",size,(250,248,242,255))
+    product=ImageOps.contain(product,(size[0]-pad*2,size[1]-pad*2),method=Image.Resampling.LANCZOS)
+    stage.alpha_composite(product,((size[0]-product.width)//2,(size[1]-product.height)//2))
+    mask=Image.new("L",size,0)
+    md=ImageDraw.Draw(mask); md.rounded_rectangle((0,0,size[0]-1,size[1]-1),radius=28,fill=255)
+    canvas.paste(stage,(x1,y1),mask)
+
+def _brand(draw,W,gold,white,variant,store):
+    # compact, premium, always recognizable
+    draw.rounded_rectangle((48,34,258,92),radius=29,fill=(255,255,255,16),outline=(239,202,117,130),width=1)
+    _text(draw,(73,46),"LAQTA",_font(32,True),white)
+    _text(draw,(190,55),"لقطة",_font(20,True),gold)
+    bw=max(126,int(draw.textlength(store,font=_font(18,True)))+42)
+    draw.rounded_rectangle((W-bw-48,40,W-48,88),radius=23,fill=(0,0,0,24),outline=(255,255,255,44),width=1)
+    _text(draw,(W-bw/2-48,64),store,_font(18,True),gold,anchor="mm")
+
+def _price_block(draw,x,y,cp,old,pct,gold,white,muted,red,large=True):
+    if pct is not None:
+        draw.rounded_rectangle((x,y,x+166,y+42),radius=21,fill=gold)
+        _text(draw,(x+83,y+21),f"خصم {pct}%",_font(20,True),(8,31,25,255),anchor="mm")
+        y+=58
+    _text(draw,(x,y),"السعر الآن",_font(17,True),muted)
+    _text(draw,(x,y+27),cp or "تحقق من السعر",_font(52 if large else 44,True),white)
+    if old:
+        oy=y+(91 if large else 80)
+        _text(draw,(x,oy),f"بدل {old}",_font(22,True),muted)
+        ww=_measure(draw,f"بدل {old}",_font(22,True))
+        draw.line((x,oy+15,x+ww,oy+15),fill=red,width=3)
+    return y
+
+def _code_badge(draw,x,y,code,gold,white):
+    if not code: return
+    draw.rounded_rectangle((x,y,x+345,y+54),radius=16,fill=(255,255,255,14),outline=(239,202,117,150),width=1)
+    _text(draw,(x+18,y+12),"الكود",_font(17,True),gold)
+    _text(draw,(x+111,y+10),code,_font(28,True),white)
 
 async def prepare_deal_asset(offer):
     title=str(offer["title"] or "").strip()
@@ -239,68 +285,103 @@ async def prepare_deal_asset(offer):
     url=str(offer["url"] or "").strip()
 
     meta=await _product_meta(url,title,source)
-    exact_title=meta["title"]
+    exact_title=_clean_title(meta["title"])
     product=meta["image"]
 
-    identity=f"{DESIGN_VERSION}|{source}|{url}|{exact_title}|{cp}|{old}|{code}"
+    identity=f"v6-luxury|{source}|{url}|{exact_title}|{cp}|{old}|{code}"
     digest=hashlib.sha256(identity.encode("utf-8","ignore")).hexdigest()
-    variant=int(digest[:2],16)%6
-    name=digest[:24]+".png"; out=MEDIA_DIR/name
+    variant=int(digest[:2],16)%5
+    name=digest[:24]+".png"
+    out=MEDIA_DIR/name
     if out.exists():
         return {"image_url":f"{PUBLIC_BASE}/media/{name}","title":exact_title}
 
-    W,H=1200,675; canvas=_bg(W,H,variant); draw=ImageDraw.Draw(canvas)
-    GOLD=(239,202,117,255); GOLD2=(255,225,157,255); WHITE=(248,248,244,255)
-    MUTED=(185,192,188,255); DARK=(4,28,24,255); RED=(235,78,74,255)
-    store=_brand_store(source); _brand(draw,W,GOLD,WHITE,DARK,variant,store)
+    W,H=1200,675
+    canvas=_bg(W,H,variant)
+    draw=ImageDraw.Draw(canvas)
+
+    GOLD=(239,202,117,255)
+    GOLD2=(255,228,169,255)
+    WHITE=(249,249,245,255)
+    MUTED=(190,198,193,255)
+    RED=(235,88,78,255)
+    store=_brand_store(source)
+    _brand(draw,W,GOLD,WHITE,variant,store)
+
     now=_money(cp); before=_money(old)
     pct=round((before-now)/before*100) if now is not None and before is not None and before>now else None
 
-    # Six layouts; same LAQTA identity, different composition.
+    # subtle decorative orbs to make the card feel designed, not templated
+    for ox,oy,rr,alpha in ((1040,560,170,24),(1050,130,95,20),(120,600,110,14)):
+        draw.ellipse((ox-rr,oy-rr,ox+rr,oy+rr),fill=(239,202,117,alpha))
+
     if variant==0:
-        _paste_product(canvas,product,(62,135,575,608)); tx,ty,mw=620,145,520
+        # product right, copy left
+        _card(canvas,(665,124,1148,614))
+        _paste_product(canvas,product,(686,145,1127,593))
+        _text(draw,(55,137),"لقطة اليوم",_font(23,True),GOLD)
+        y=181
+        for line in _wrap(draw,exact_title,_font(38,True),555,2):
+            _text(draw,(610,y),line,_font(38,True),WHITE,anchor="ra"); y+=52
+        py=max(315,y+20)
+        _price_block(draw,55,py,cp,old,pct,GOLD,GOLD2,MUTED,RED)
+        _code_badge(draw,55,545,code,GOLD,WHITE)
+
     elif variant==1:
-        _paste_product(canvas,product,(690,125,1145,610)); tx,ty,mw=54,145,575
+        # product left, elegant editorial copy right
+        _card(canvas,(54,124,550,612))
+        _paste_product(canvas,product,(75,145,529,591))
+        _text(draw,(610,145),"اختيار لقطة",_font(22,True),GOLD)
+        y=188
+        for line in _wrap(draw,exact_title,_font(36,True),530,2):
+            _text(draw,(1140,y),line,_font(36,True),WHITE,anchor="ra"); y+=50
+        _price_block(draw,610,max(330,y+28),cp,old,pct,GOLD,GOLD2,MUTED,RED)
+        _code_badge(draw,610,548,code,GOLD,WHITE)
+
     elif variant==2:
-        _paste_product(canvas,product,(395,135,805,430)); tx,ty,mw=600,450,1040
-    elif variant==3:
-        _text(draw,(54,120),"BIG DEAL",_font(58,True),GOLD)
-        _paste_product(canvas,product,(60,215,545,600)); tx,ty,mw=590,140,555
-    elif variant==4:
-        _paste_product(canvas,product,(78,150,540,585)); tx,ty,mw=610,160,535
-    else:
-        _paste_product(canvas,product,(650,125,1135,530)); tx,ty,mw=54,150,545
-
-    # Product title
-    if variant==2:
-        y=452
-        for line in _wrap(draw,exact_title,_font(29,True),1040,2):
-            _text(draw,(600,y),line,_font(29,True),WHITE,anchor="mm"); y+=39
-        _text(draw,(600,555),cp or "CHECK PRICE",_font(48,True),GOLD2,anchor="mm")
+        # centered hero product with floating discount
+        _card(canvas,(296,122,904,442))
+        _paste_product(canvas,product,(318,143,882,420))
         if pct is not None:
-            draw.rounded_rectangle((76,150,240,195),radius=22,fill=GOLD)
-            _text(draw,(158,173),f"-{pct}%",_font(22,True),DARK,anchor="mm")
-    else:
-        title_font=_font(34 if variant!=3 else 31,True)
-        y=ty
-        for line in _wrap(draw,exact_title,title_font,mw,3):
-            rtl=bool(ARABIC_RE.search(line))
-            x=tx+mw if rtl else tx
-            _text(draw,(x,y),line,title_font,WHITE,anchor="ra" if rtl else None); y+=47
-        py=max(y+20,345)
-        if pct is not None:
-            draw.rounded_rectangle((tx,py,tx+174,py+44),radius=22,fill=GOLD)
-            _text(draw,(tx+87,py+22),f"SAVE {pct}%",_font(19,True),DARK,anchor="mm"); py+=58
-        _text(draw,(tx,py),"NOW",_font(16,True),MUTED)
-        _text(draw,(tx,py+23),cp or "CHECK PRICE",_font(50,True),GOLD2)
-        if old:
-            oy=py+85; _text(draw,(tx,oy),f"WAS {old}",_font(21,True),MUTED)
-            ow=draw.textlength(f"WAS {old}",font=_font(21,True)); draw.line((tx,oy+14,tx+ow,oy+14),fill=RED,width=3)
+            draw.ellipse((842,112,1010,280),fill=GOLD)
+            _text(draw,(926,184),f"-{pct}%",_font(34,True),(7,30,24,255),anchor="mm")
+            _text(draw,(926,218),"خصم",_font(18,True),(7,30,24,255),anchor="mm")
+        y=477
+        for line in _wrap(draw,exact_title,_font(30,True),1030,2):
+            _text(draw,(600,y),line,_font(30,True),WHITE,anchor="mm"); y+=39
+        _text(draw,(600,578),cp or "تحقق من السعر",_font(48,True),GOLD2,anchor="mm")
         if code:
-            cy=min(574,py+142)
-            draw.rounded_rectangle((tx,cy,tx+370,cy+52),radius=15,outline=(239,202,117,155),width=1)
-            _text(draw,(tx+18,cy+13),f"CODE  {code}",_font(24,True),WHITE)
+            _text(draw,(600,625),f"كود {code}",_font(20,True),WHITE,anchor="mm")
 
-    _text(draw,(52,642),"LAQTA • VERIFIED DEAL • AFFILIATE",_font(15,False),MUTED)
+    elif variant==3:
+        # bold price-first card
+        _text(draw,(55,130),"سعر يلفت 👀",_font(29,True),GOLD)
+        _text(draw,(55,182),cp or "تحقق من السعر",_font(68,True),GOLD2)
+        if pct is not None:
+            draw.rounded_rectangle((55,268,230,314),radius=23,fill=GOLD)
+            _text(draw,(142,291),f"خصم {pct}%",_font(21,True),(7,30,24,255),anchor="mm")
+        y=345
+        for line in _wrap(draw,exact_title,_font(33,True),520,2):
+            _text(draw,(575,y),line,_font(33,True),WHITE,anchor="ra"); y+=46
+        if old:
+            _text(draw,(55,470),f"كان {old}",_font(22,True),MUTED)
+        _code_badge(draw,55,540,code,GOLD,WHITE)
+        _card(canvas,(665,124,1148,614))
+        _paste_product(canvas,product,(686,145,1127,593))
+
+    else:
+        # magazine split with cream stripe
+        draw.rounded_rectangle((42,120,1158,620),radius=38,fill=(255,255,255,12),outline=(239,202,117,80),width=2)
+        _paste_product(canvas,product,(62,145,545,592))
+        _text(draw,(610,150),"عرض مختار",_font(22,True),GOLD)
+        y=195
+        for line in _wrap(draw,exact_title,_font(35,True),500,2):
+            _text(draw,(1110,y),line,_font(35,True),WHITE,anchor="ra"); y+=49
+        _price_block(draw,610,max(330,y+18),cp,old,pct,GOLD,GOLD2,MUTED,RED)
+        _code_badge(draw,610,548,code,GOLD,WHITE)
+
+    # tiny footer only; no clutter
+    draw.line((48,636,1152,636),fill=(255,255,255,24),width=1)
+    _text(draw,(55,646),"LAQTA • عروض مختارة وموثقة",_font(14,False),MUTED)
     canvas.convert("RGB").save(out,"PNG",optimize=True)
     return {"image_url":f"{PUBLIC_BASE}/media/{name}","title":exact_title}
