@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 BASE=Path(__file__).resolve().parent
 DB=BASE/"laqta.db"; SEC=BASE/".laqta_secret"; TZ=ZoneInfo("Asia/Riyadh")
+CURATED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/main/laqta-control-center/curated_offers.json"
+CRON_TOKEN=os.getenv("LAQTA_CRON_TOKEN","")
 if not SEC.exists(): SEC.write_bytes(secrets.token_bytes(32))
 RAW=SEC.read_bytes(); CIPHER=Fernet(base64.urlsafe_b64encode(hashlib.sha256(RAW).digest()))
 app=FastAPI(title="LAQTA Control Center")
@@ -31,7 +33,11 @@ def log(m,l="info"):
 def auth(r):
  if not r.session.get("ok"): raise HTTPException(401,"login_required")
 def init():
- c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '');create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);""")
+ c=con(); c.executescript("""create table if not exists settings(key text primary key,value text not null);create table if not exists offers(id integer primary key autoincrement,title text,current_price text default '',old_price text default '',code text default '',url text default '',source text default 'manual',status text default 'new',created_at text,posted_at text default '',score integer default 0);create table if not exists sources(id integer primary key autoincrement,name text,url text unique,enabled integer default 1,last_checked text default '');create table if not exists activity(id integer primary key autoincrement,level text,message text,created_at text);create table if not exists counters(day text primary key,posts integer default 0);""")
+ try:
+  cols=[r["name"] for r in c.execute("pragma table_info(offers)").fetchall()]
+  if "score" not in cols: c.execute("alter table offers add column score integer default 0")
+ except: pass
  defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","automation":"0","interval":"120","max_day":"8","mode":"queue","start":"08:00","end":"23:30","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","brand":"لقطة | LAQTA"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
@@ -121,38 +127,33 @@ def _money(v):
 
 def compose(o):
  title=re.sub(r"\s+"," ",o["title"].strip())
+ if len(title)>92: title=title[:89].rstrip()+"..."
  cp=o["current_price"].strip(); oldp=o["old_price"].strip(); code=o["code"].strip(); url=o["url"].strip()
  src=(o["source"] or "").lower()
  now=_money(cp); before=_money(oldp)
- hooks=[
-  "🔥 لقطة اليوم اللي تستاهل توقف عندها!",
-  "🚨 لقطة قوية للي يحب يوفر صح!",
-  "😮‍💨 السعر هذا بصراحة لقطة!",
-  "⚡ إذا كنت تنتظر سعر زين… هذا وقتها.",
-  "🎯 لقطة تستاهل تنحفظ قبل ما يتغير السعر."
- ]
- idx=(sum(ord(x) for x in title)+len(code)+len(url))%len(hooks)
- parts=[hooks[idx], title]
+ hooks={
+  "noon":["🔥 لقطة نون اليوم","⚡ سعر يستاهل الوقفة","🎯 لقطة نون سريعة"],
+  "temu":["🔥 لقطة Temu اليوم","😮‍💨 سعر Temu ملفت","⚡ لقطة تستاهل تشيكها"],
+  "shein":["🔥 لقطة SHEIN اليوم","✨ اختيار يستاهل","⚡ لقطة SHEIN سريعة"],
+  "amazon":["🔥 لقطة Amazon اليوم","🎯 اختيار Amazon يستاهل","⚡ سعر ملفت على Amazon"]
+ }
+ arr=next((v for k,v in hooks.items() if k in src),["🔥 لقطة اليوم","⚡ لقطة سريعة","🎯 اختيار يستاهل"])
+ parts=[arr[(sum(map(ord,title))+len(url))%len(arr)],title]
  if now is not None and before is not None and before>now:
-  save=before-now; pct=round(save/before*100)
-  parts.append(f"💸 الآن {cp} بدل {oldp} — توفير حوالي {save:.0f} ر.س ({pct}%)")
+  pct=round((before-now)/before*100); parts.append(f"💸 {cp} بدل {oldp} — خصم {pct}%")
  elif cp:
-  parts.append(f"💸 السعر الظاهر الآن: {cp}")
+  parts.append(f"💸 {cp}")
  if code:
-  if "noon" in src:
-   parts.append(f"🏷️ كود لقطة: {code} — خصم 10% حسب شروط نون")
-  elif "temu" in src:
-   parts.append(f"🏷️ استخدم الكود: {code} — الخصم يختلف حسب الحساب والحملة")
-  elif "shein" in src:
-   parts.append(f"🏷️ كود العرض: {code} — للمؤهلين حسب شروط SHEIN")
-  else:
-   parts.append(f"🏷️ الكود: {code}")
- if url: parts.append(f"🔗 خذ العرض من هنا: {url}")
- parts.append("⏳ الأسعار والعروض ممكن تتغير، تأكد من السعر النهائي قبل الدفع.")
- parts.append("لقطة | ندور الأرخص ونجيب لك الزبدة 🎯")
+  if "noon" in src: parts.append(f"🏷️ {code} | خصم 10% حسب شروط نون")
+  elif "temu" in src: parts.append(f"🏷️ {code} | الخصم حسب الأهلية والحملة")
+  elif "shein" in src: parts.append(f"🏷️ {code} | ابحث بالكود داخل SHEIN")
+  else: parts.append(f"🏷️ {code}")
+ if url: parts.append(f"👇 {url}")
+ parts.append("لقطة | الزبدة بدون لف 🎯")
  d=gs("disclosure").strip()
  if d: parts.append(d)
- return "\n".join(parts)[:275]
+ text="\n".join(parts)
+ return text[:278]
 async def publish_text(text):
  cid=gs("buffer_channel")
  if not cid:
@@ -177,7 +178,7 @@ async def publish_text(text):
 async def publish_one(force=False):
  now=datetime.now(TZ); day=now.date().isoformat(); c=con(); n=c.execute("select posts from counters where day=?",(day,)).fetchone(); used=n["posts"] if n else 0
  if not force and used>=int(gs("max_day")): c.close(); return "وصل الحد اليومي"
- o=c.execute("select * from offers where status='new' order by id asc limit 1").fetchone()
+ o=c.execute("select * from offers where status='new' order by score desc, id asc limit 1").fetchone()
  if not o: c.close(); return "لا توجد عروض جاهزة"
  try:
   await publish_text(compose(o)); t=now.isoformat(timespec="seconds"); c.execute("update offers set status='posted',posted_at=? where id=?",(t,o["id"])); c.execute("insert into counters(day,posts) values(?,1) on conflict(day) do update set posts=posts+1",(day,)); c.commit(); ss("last_post",t); log("تم إرسال عرض إلى Buffer: "+o["title"]); return "تم"
@@ -188,6 +189,8 @@ async def start(r:Request):
  if not gs("buffer_channel"):
   try: await discover()
   except Exception as e: raise HTTPException(400,str(e))
+ try: await scan()
+ except Exception as e: log("فحص البداية: "+str(e),"error")
  ss("automation","1"); log("بدأ التشغيل التلقائي"); return {"ok":1}
 @app.post("/api/stop")
 async def stop(r:Request): auth(r); ss("automation","0"); log("تم إيقاف التشغيل"); return {"ok":1}
@@ -201,7 +204,7 @@ async def offers(r:Request):
  auth(r); c=con(); a=[dict(x) for x in c.execute("select * from offers order by id desc limit 100")]; c.close(); return a
 @app.post("/api/offers")
 async def addoffer(p:Offer,r:Request):
- auth(r); c=con(); c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at) values(?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"))); c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
+ auth(r); c=con(); c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score) values(?,?,?,?,?,?,?,?,?)",(p.title,p.current_price,p.old_price,p.code,p.url,p.source,"new",datetime.now(TZ).isoformat(timespec="seconds"),0)); c.commit(); c.close(); log("تمت إضافة عرض: "+p.title); return {"ok":1}
 @app.delete("/api/offers/{oid}")
 async def deloffer(oid:int,r:Request):
  auth(r); c=con(); c.execute("delete from offers where id=?",(oid,)); c.commit(); c.close(); return {"ok":1}
@@ -214,22 +217,67 @@ async def addsource(p:Source,r:Request):
 @app.delete("/api/sources/{sid}")
 async def delsource(sid:int,r:Request):
  auth(r); c=con(); c.execute("delete from sources where id=?",(sid,)); c.commit(); c.close(); return {"ok":1}
+async def import_curated():
+ added=0
+ try:
+  async with httpx.AsyncClient(timeout=20,follow_redirects=True) as x:
+   rr=await x.get(CURATED_URL,headers={"User-Agent":"LAQTA-Control/1.0"})
+   rr.raise_for_status(); data=rr.json()
+  items=sorted(data.get("offers",[]),key=lambda z:int(z.get("score",0)),reverse=True)
+  for it in items:
+   title=re.sub(r"\s+"," ",str(it.get("title",""))).strip()
+   url=str(it.get("url","")).strip()
+   if not title or not url or int(it.get("score",0))<5: continue
+   c=con(); ex=c.execute("select 1 from offers where url=? or title=?",(url,title)).fetchone()
+   if not ex:
+    c.execute("insert into offers(title,current_price,old_price,code,url,source,status,created_at,score) values(?,?,?,?,?,?,?,?,?)",
+      (title,str(it.get("current_price","")),str(it.get("old_price","")),str(it.get("code","")),url,str(it.get("source","auto")),"new",datetime.now(TZ).isoformat(timespec="seconds"),int(it.get("score",0))))
+    c.commit(); added+=1
+   c.close()
+ except Exception as e:
+  log("فشل استيراد العروض المختارة: "+str(e),"error")
+ return added
+
 async def scan():
- c=con(); srcs=[dict(x) for x in c.execute("select * from sources where enabled=1")]; c.close(); added=0
+ added=await import_curated()
+ c=con(); srcs=[dict(x) for x in c.execute("select * from sources where enabled=1")]; c.close()
  for s in srcs:
   try:
    f=feedparser.parse(s["url"])
    for e in f.entries[:15]:
     title=re.sub(r"\s+"," ",getattr(e,"title","")).strip(); link=getattr(e,"link","")
-    if not title: continue
+    blob=(title+" "+str(getattr(e,"summary",""))).lower()
+    if not title or not link: continue
+    if not any(k in blob for k in ("خصم","عرض","off","deal","sale","best seller","الأكثر مبيع")): continue
     c=con(); ex=c.execute("select 1 from offers where url=? or title=?",(link,title)).fetchone()
-    if not ex: c.execute("insert into offers(title,url,source,status,created_at) values(?,?,?,?,?)",(title,link,s["name"],"new",datetime.now(TZ).isoformat(timespec="seconds"))); c.commit(); added+=1
+    if not ex:
+     c.execute("insert into offers(title,url,source,status,created_at,score) values(?,?,?,?,?,?)",(title,link,s["name"],"new",datetime.now(TZ).isoformat(timespec="seconds"),3))
+     c.commit(); added+=1
     c.close()
    c=con(); c.execute("update sources set last_checked=? where id=?",(datetime.now(TZ).isoformat(timespec="seconds"),s["id"])); c.commit(); c.close()
   except Exception as e: log(f"فشل المصدر {s['name']}: {e}","error")
  log(f"فحص المصادر: تمت إضافة {added} عناصر"); return added
 @app.post("/api/scan")
 async def scanapi(r:Request): auth(r); return {"ok":1,"added":await scan()}
+
+@app.post("/api/cron")
+async def cron_tick(r:Request):
+ token=r.headers.get("X-Cron-Token","")
+ if not CRON_TOKEN or not token or not secrets.compare_digest(token,CRON_TOKEN):
+  raise HTTPException(403,"forbidden")
+ if gs("automation")!="1": return {"ok":1,"running":False}
+ now=datetime.now(TZ); hm=now.strftime("%H:%M")
+ if not (gs("start")<=hm<=gs("end")): return {"ok":1,"running":True,"window":False}
+ added=await scan()
+ last=gs("last_post"); due=True
+ if last:
+  try: due=(now-datetime.fromisoformat(last)).total_seconds()>=int(gs("interval"))*60
+  except: pass
+ msg="ليس موعد النشر بعد"
+ if due:
+  try: msg=await publish_one()
+  except Exception as e: log("Cron publish: "+str(e),"error"); msg=str(e)
+ return {"ok":1,"running":True,"added":added,"message":msg}
 @app.get("/api/activity")
 async def activity(r:Request):
  auth(r); c=con(); a=[dict(x) for x in c.execute("select * from activity order by id desc limit 80")]; c.close(); return a
