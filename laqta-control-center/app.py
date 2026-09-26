@@ -272,6 +272,53 @@ def offer_is_safe(o):
   return "shein." in url and "-p-" in url and code=="US3RU32" and bool(cp)
  return url.startswith("http")
 
+LIVE_TRENDS_URL="https://trends24.in/saudi-arabia/"
+TREND_CACHE={"at":0.0,"tags":[]}
+
+async def _live_saudi_trends():
+ now=asyncio.get_running_loop().time()
+ if TREND_CACHE["tags"] and now-TREND_CACHE["at"]<900:
+  return TREND_CACHE["tags"]
+ try:
+  async with httpx.AsyncClient(timeout=10,follow_redirects=True,headers={"User-Agent":"Mozilla/5.0 LAQTA/1.0"}) as x:
+   rr=await x.get(LIVE_TRENDS_URL)
+   rr.raise_for_status()
+  page=rr.text
+  raw=re.findall(r"#([\w\u0600-\u06ff_]{2,60})",page)
+  tags=[]
+  for x in raw:
+   t="#"+x.strip("_")
+   if len(t)>2 and t not in tags: tags.append(t)
+  TREND_CACHE["at"]=now; TREND_CACHE["tags"]=tags[:80]
+  return TREND_CACHE["tags"]
+ except Exception:
+  return TREND_CACHE["tags"]
+
+def _trend_relevant(title,src,tag):
+ s=(str(title or "")+" "+str(src or "")).lower()
+ t=tag.lstrip("#").replace("_"," ").lower()
+ groups=[
+  (("ايفون","iphone","جوال","هاتف","موبايل"),("ايفون","ايفونات","iphone","جوال","هواتف","مرسول")),
+  (("قهوة","قهوه","coffee","v60","اسبريسو","espresso"),("قهوة","قهوه","كافيه","كوفي","coffee")),
+  (("عطر","عطور","perfume","fragrance"),("عطر","عطور","perfume")),
+  (("سماعة","سماعات","ماوس","كيبورد","تقنية","شاحن","تابلت","لابتوب","gaming","rgb"),("تقنية","الكترونيات","ألعاب","العاب","جيمينج","gaming")),
+  (("مطبخ","قلاية","هوائية","خلاط","منزل","مكنسة","تلفزيون","tv"),("منزل","مطبخ","تقنية","الكترونيات")),
+  (("ملابس","حذاء","شنط","shein","شي ان"),("موضة","ازياء","أزياء","ملابس","شي ان","shein")),
+ ]
+ for keys,trends in groups:
+  if any(k in s for k in keys) and any(k in t for k in trends): return True
+ commercial=("عروض","خصومات","تخفيضات","تسوق","متجر","نون","امازون","أمازون","temu","تيمو","shein","شي_ان")
+ return any(k in t for k in commercial)
+
+async def _relevant_live_trend_tags(title,src,max_tags=2):
+ trends=await _live_saudi_trends()
+ out=[]
+ for t in trends:
+  if _trend_relevant(title,src,t) and t not in out:
+   out.append(t)
+   if len(out)>=max_tags: break
+ return out
+
 def _hashtags(title,src,raw=""):
  tags=[]
  for x in re.findall(r"#[^\s#]+",str(raw or "")):
@@ -304,7 +351,7 @@ def _short_product_title(title):
  t=re.sub(r"\s+(?:مع FaceTime|نسخة الشرق الأوسط|Middle East Version).*$","",t,flags=re.I)
  return t[:92].rstrip(" ,-")
 
-def compose(o):
+def compose(o,live_tags=None):
  title=_short_product_title(o["title"])
  cp=str(o["current_price"] or "").strip(); oldp=str(o["old_price"] or "").strip()
  code=str(o["code"] or "").strip(); url=str(o["url"] or "").strip()
@@ -315,6 +362,9 @@ def compose(o):
  try: raw_tags=(o["tags"] or "").strip()
  except: raw_tags=""
  tags=_hashtags(title,src,raw_tags)
+ for lt in (live_tags or []):
+  if lt not in tags: tags.insert(0,lt)
+ tags=tags[:6]
  store="نون" if "noon" in src else "أمازون" if "amazon" in src else "Temu" if "temu" in src else "SHEIN" if "shein" in src else ""
  seed=(sum(map(ord,title))+len(url))%6
 
@@ -415,7 +465,8 @@ async def publish_one(force=False):
      continue
     c.execute("update offers set status='publishing' where id=?",(cand["id"],)); c.commit()
     try:
-     await publish_text(compose(cand))
+     live_tags=await _relevant_live_trend_tags(cand["title"],cand["source"],2)
+     await publish_text(compose(cand,live_tags))
     except Exception as e:
      msg=str(e)
      if "already got this one scheduled or posted" in msg.lower() or "same thing twice" in msg.lower():
