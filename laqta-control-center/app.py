@@ -352,27 +352,22 @@ async def public_backup():
 @app.post("/api/pulse")
 async def public_pulse():
  now=datetime.now(TZ)
- last=gs("pulse_last")
- if last:
-  try:
-   if (now-datetime.fromisoformat(last)).total_seconds()<2700:
-    return {"ok":1,"skipped":"rate_limited"}
-  except: pass
- ss("pulse_last",now.isoformat(timespec="seconds"))
  if gs("automation")!="1":
   return {"ok":1,"running":False}
  hm=now.strftime("%H:%M")
  if not (gs("start")<=hm<=gs("end")):
   return {"ok":1,"running":True,"window":False}
- added=await scan()
+ # A public wake call can never accelerate publishing beyond the configured hourly interval.
  last_post=gs("last_post"); due=True
  if last_post:
   try: due=(now-datetime.fromisoformat(last_post)).total_seconds()>=int(gs("interval"))*60
   except: pass
- msg="ليس موعد النشر بعد"
- if due:
-  try: msg=await publish_one()
-  except Exception as e: log("Pulse publish: "+str(e),"error"); msg=str(e)
+ if not due:
+  return {"ok":1,"running":True,"skipped":"not_due"}
+ ss("pulse_last",now.isoformat(timespec="seconds"))
+ added=await scan()
+ try: msg=await publish_one()
+ except Exception as e: log("Pulse publish: "+str(e),"error"); msg=str(e)
  return {"ok":1,"running":True,"added":added,"message":msg}
 
 @app.post("/api/cron")
