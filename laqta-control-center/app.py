@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
+from deal_image import make_deal_image, MEDIA_DIR
 BASE=Path(__file__).resolve().parent
 DB=BASE/"laqta.db"; SEC=BASE/".laqta_secret"; TZ=ZoneInfo("Asia/Riyadh")
 CURATED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/curated_offers.json"
@@ -25,6 +26,7 @@ app=FastAPI(title="LAQTA Control Center")
 PUBLISH_LOCK=asyncio.Lock()
 app.add_middleware(SessionMiddleware,secret_key=hashlib.sha256(RAW+b"session").hexdigest(),max_age=2592000)
 app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
+app.mount("/media",StaticFiles(directory=MEDIA_DIR),name="media")
 def con():
  x=sqlite3.connect(DB,check_same_thread=False); x.row_factory=sqlite3.Row; return x
 def gs(k,d=""):
@@ -313,7 +315,7 @@ def compose(o):
   text=assemble(tags,title[:34].rstrip()+"...")
  return text
 
-async def publish_text(text):
+async def publish_text(text,image_url):
  if not gs("buffer_channel"):
   await discover()
  try:
@@ -335,7 +337,9 @@ async def publish_text(text):
  errors=[]
  for cid in ids:
   try:
-   d=await bgql(q,{"input":{"text":text,"channelId":cid,"schedulingType":"automatic","mode":mode}})
+   inp={"text":text,"channelId":cid,"schedulingType":"automatic","mode":mode,
+        "assets":[{"image":{"url":image_url}}]}
+   d=await bgql(q,{"input":inp})
    result=d.get("createPost") or {}
    if result.get("message"): raise RuntimeError(result.get("message"))
    if not result.get("post"): raise RuntimeError("Buffer لم يرجع Post")
@@ -367,7 +371,9 @@ async def publish_one(force=False):
      continue
     c.execute("update offers set status='publishing' where id=?",(cand["id"],)); c.commit()
     try:
-     await publish_text(compose(cand))
+     image_url=await make_deal_image(cand)
+     if not image_url: raise RuntimeError("تعذر إنشاء صورة العرض")
+     await publish_text(compose(cand),image_url)
     except Exception as e:
      msg=str(e)
      if "already got this one scheduled or posted" in msg.lower() or "same thing twice" in msg.lower():
