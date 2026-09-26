@@ -143,6 +143,16 @@ def clean_title(t):
     t = re.sub(r"\s*[-|]\s*(Amazon\.sa|Amazon Saudi Arabia|noon|SHEIN|Temu).*$", "", t, flags=re.I)
     return t[:150].strip(" -|")
 
+def extract_product_title(desc, fallback_title):
+    s = txt(desc)
+    # Search-result snippets from store category pages often begin with a real product.
+    m = re.search(r"(.{18,170}?)\s+[1-5]\.\d\s+(?:\d|[0-9.,]+[Kk])", s)
+    if m:
+        candidate = re.sub(r"^(?:أفضل المنتجات|عرض الميجا|عروض اليوم الوطني|عرض)\s*[📣🔥]*\s*", "", m.group(1)).strip()
+        if len(candidate) >= 18:
+            return candidate[:150]
+    return clean_title(fallback_title)
+
 def build():
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     slot = datetime.now(timezone.utc).hour // 4
@@ -166,10 +176,10 @@ def build():
                 continue
             if store == "shein" and "shein." not in u:
                 continue
-            if not productish(store, u):
-                continue
-
+            direct_product = productish(store, u)
             sc, d, prices = score(store, it["title"], it["desc"], u)
+            if not direct_product and prices and d >= 10:
+                sc += 3
             if sc < 6:
                 continue
 
@@ -181,12 +191,14 @@ def build():
                 if len(vals) > 1 and vals[-1] > vals[0]:
                     old = f"{vals[-1]:g} ر.س"
 
-            turl = tracked_url(store, u, cfg)
+            turl = tracked_url(store, u, cfg) if direct_product else cfg.get("fallback","")
+            if store == "amazon" and not direct_product:
+                continue
             if not turl:
                 continue
 
             store_hits.append({
-                "title": clean_title(it["title"]),
+                "title": extract_product_title(it["desc"], it["title"]),
                 "current_price": current,
                 "old_price": old,
                 "code": cfg["code"],
@@ -196,7 +208,7 @@ def build():
                 "discount": d,
                 "verified_at": now,
                 "source_url": u,
-                "tracking": "amazon_tag" if store == "amazon" else "referral_code",
+                "tracking": "amazon_tag" if store == "amazon" else ("product_url_plus_code" if direct_product else "campaign_link_plus_code"),
             })
 
         store_hits.sort(key=lambda z: z["score"], reverse=True)
