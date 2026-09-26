@@ -209,7 +209,7 @@ def amazon_direct_deals(now):
             "source_url":"https://www.amazon.sa"+html.unescape(href.split("?")[0]),
             "tracking":"amazon_tag"
         })
-        if len(out)>=7: break
+        if len(out)>=35: break
     return out
 
 def temu_direct_deals(now):
@@ -278,10 +278,14 @@ def build():
     slot = datetime.now(timezone.utc).hour // 4
     candidates = []
     candidates.extend(amazon_direct_deals(now))
-    candidates.extend(temu_direct_deals(now))
     candidates.extend(load_assistant_offers(now))
 
     for store, cfg in STORES.items():
+        # Automated price extraction is enabled only where we can verify the
+        # exact destination and current deal page. Other stores are supplied
+        # by assistant_offers after exact product-link verification.
+        if store != "amazon":
+            continue
         q = cfg["queries"][slot % len(cfg["queries"])]
         try:
             items = search(q)
