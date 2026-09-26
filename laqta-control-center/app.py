@@ -391,20 +391,6 @@ async def scanapi(r:Request): auth(r); return {"ok":1,"added":await scan()}
 async def public_backup():
  return {"ciphertext":build_encrypted_backup(),"updated_at":datetime.now(TZ).isoformat(timespec="seconds")}
 
-@app.get("/api/kick-now-7f4d2a")
-async def one_time_kick():
- if gs("kick_now_7f4d2a")=="1":
-  return {"ok":1,"already":True}
- ss("kick_now_7f4d2a","1")
- added=await scan()
- try:
-  msg=await publish_one(True)
-  return {"ok":1,"added":added,"message":msg}
- except Exception as e:
-  ss("kick_now_7f4d2a","0")
-  log("Kick publish: "+str(e),"error")
-  raise HTTPException(500,str(e))
-
 @app.post("/api/pulse")
 async def public_pulse():
  now=datetime.now(TZ)
