@@ -18,7 +18,12 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 app.mount("/outputs", StaticFiles(directory=UPLOADS), name="outputs")
 
 JOBS: dict[str, dict] = {}
-HF_SPACE = os.getenv("HF_WAN_SPACE", "zerogpu-aoti/wan2-2-fp8da-aoti-faster")
+FREE_ENGINES = [
+    {"name": "Wan 2.2 14B Fast", "space": "zerogpu-aoti/wan2-2-fp8da-aoti-faster", "api": "/generate_video"},
+    {"name": "Wan 2.2 14B Preview", "space": "r3gm/Wan2.2-14B-Preview", "api": "/generate_video"},
+    {"name": "Wan 2.2 14B Fast Preview", "space": "kulkas2pintu/Wan2.2-14B-Fast-Preview", "api": "/generate_video"},
+]
+ENGINE_COOLDOWNS: dict[str, float] = {}
 
 @app.get("/")
 def index():
@@ -30,8 +35,8 @@ def health():
         "ok": True,
         "service": "onyx-motion-studio",
         "provider_configured": True,
-        "engine": "Wan 2.2 14B · ZeroGPU Free",
-        "engine_mode": "community_zerogpu",
+        "engine": "ONYX Free Engine Router",
+        "engine_mode": "multi_engine_free_router",
     }
 
 @app.get("/api/capabilities")
@@ -107,24 +112,50 @@ def run_wan(job_id: str, source_path: Path, prompt: str, duration: int):
         job["status"] = "connecting"
         job["progress"] = 8
         from gradio_client import Client, handle_file
+        import time
 
-        client = Client(HF_SPACE, verbose=False)
-        job["status"] = "queued"
-        job["progress"] = 18
-
-        # Public ZeroGPU Wan 2.2 space. ZeroGPU can queue or throttle free users.
-        result = client.predict(
-            input_image=handle_file(str(source_path)),
-            prompt=enhanced_prompt,
-            steps=6,
-            negative_prompt="low quality, blurry, distorted anatomy, extra fingers, deformed face, static frame, subtitles, watermark",
-            duration_seconds=float(max(0.5, min(duration, 5))),
-            guidance_scale=1.0,
-            guidance_scale_2=1.0,
-            seed=42,
-            randomize_seed=True,
-            api_name="/generate_video",
-        )
+        result = None
+        errors = []
+        quota_blocked = False
+        for idx, engine in enumerate(FREE_ENGINES):
+            if ENGINE_COOLDOWNS.get(engine["space"], 0) > time.time():
+                continue
+            job["status"] = "queued"
+            job["progress"] = 15 + idx * 8
+            job["engine"] = engine["name"]
+            try:
+                client = Client(engine["space"], verbose=False)
+                result = client.predict(
+                    input_image=handle_file(str(source_path)),
+                    prompt=enhanced_prompt,
+                    steps=6,
+                    negative_prompt="low quality, blurry, distorted anatomy, extra fingers, deformed face, static frame, subtitles, watermark",
+                    duration_seconds=float(max(0.5, min(duration, 5))),
+                    guidance_scale=1.0,
+                    guidance_scale_2=1.0,
+                    seed=42,
+                    randomize_seed=True,
+                    api_name=engine["api"],
+                )
+                break
+            except Exception as engine_exc:
+                msg = str(engine_exc)
+                errors.append(engine["name"] + ": " + msg[:180])
+                lowerr = msg.lower()
+                if "quota" in lowerr or "exceeded" in lowerr:
+                    quota_blocked = True
+                    ENGINE_COOLDOWNS[engine["space"]] = time.time() + 3600
+                    # ZeroGPU quota is often account/IP scoped, so don't hammer every mirror.
+                    break
+                ENGINE_COOLDOWNS[engine["space"]] = time.time() + 300
+                continue
+        if result is None:
+            if quota_blocked:
+                job["status"] = "waiting_capacity"
+                job["progress"] = 0
+                job["error"] = "Free GPU quota is temporarily exhausted. ONYX will need another independent free provider or the quota reset."
+                return
+            raise RuntimeError("All free engines are temporarily unavailable. " + " | ".join(errors[-2:]))
         job["progress"] = 92
         video_obj = result[0] if isinstance(result, (list, tuple)) else result
         remote_path = getattr(video_obj, "path", None) or (video_obj.get("path") if isinstance(video_obj, dict) else None) or str(video_obj)
