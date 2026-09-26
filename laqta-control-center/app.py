@@ -276,6 +276,7 @@ def offer_is_safe(o):
  return url.startswith("http")
 
 LIVE_TRENDS_URL="https://trends24.in/saudi-arabia/"
+TRENDS_FEED_URL="https://raw.githubusercontent.com/JaguarD7/JaguarD7/laqta-feed/laqta-control-center/saudi_trends.json"
 TREND_CACHE={"at":0.0,"tags":[]}
 
 async def _live_saudi_trends():
@@ -283,32 +284,19 @@ async def _live_saudi_trends():
  if TREND_CACHE["tags"] and now-TREND_CACHE["at"]<300:
   return TREND_CACHE["tags"]
  try:
-  headers={
-   "User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154.0.0.0 Safari/537.36",
-   "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-   "Accept-Language":"ar-SA,ar;q=0.9,en;q=0.7"
-  }
-  async with httpx.AsyncClient(timeout=15,follow_redirects=True,headers=headers) as x:
-   rr=await x.get(LIVE_TRENDS_URL)
+  async with httpx.AsyncClient(timeout=15,follow_redirects=True,headers={"User-Agent":"LAQTA-Control/1.0"}) as x:
+   rr=await x.get(TRENDS_FEED_URL)
    rr.raise_for_status()
-  page=html.unescape(rr.text)
+  data=rr.json()
   tags=[]
-  # Trends24 lists trends as links to Twitter/X search. Only accept visible
-  # anchor text already written as a hashtag. Never scan raw CSS '#...'.
-  anchors=re.findall(r"<a[^>]+href=[\\\"']https?://(?:twitter\\.com|x\\.com)/[^\\\"']+[\\\"'][^>]*>(.*?)</a>",page,re.I|re.S)
-  for body in anchors:
-   label=re.sub(r"<[^>]+>"," ",body)
-   label=html.unescape(label)
-   label=re.sub(r"\\s+"," ",label).strip()
-   if not label.startswith("#"):
-    continue
-   item=label[1:].strip()
-   item=re.sub(r"[^\\w\\u0600-\\u06ff_]+","",item)
-   if len(item)<2 or re.fullmatch(r"[0-9a-fA-F]{3,8}",item):
-    continue
+  for raw in (data.get("tags") or []):
+   t=str(raw or "").strip()
+   if not t.startswith("#"): continue
+   item=t[1:].strip()
+   item=re.sub(r"[^\w\u0600-\u06ff_]+","",item)
+   if len(item)<2 or re.fullmatch(r"[0-9a-fA-F]{3,8}",item): continue
    t="#"+item
-   if t not in tags:
-    tags.append(t)
+   if t not in tags: tags.append(t)
   TREND_CACHE["at"]=now
   TREND_CACHE["tags"]=tags[:80]
   return TREND_CACHE["tags"]
