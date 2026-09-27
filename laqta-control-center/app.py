@@ -751,6 +751,27 @@ async def cleanup_invalid(r:Request):
   deleted.append({"id":p.get("id"),"result":res.get("deletePost")})
  return {"ok":1,"deleted":deleted}
 
+@app.get("/api/x-diag-9271")
+async def x_diag_9271():
+ try:
+  info=await discover()
+  org=gs("buffer_org"); cid=gs("buffer_channel")
+  q="""query Recent($orgId: OrganizationId!, $channelIds: [ChannelId!]) {
+    posts(first: 20, input: {organizationId:$orgId, sort:[{field:createdAt,direction:desc}], filter:{status:[sent], channelIds:$channelIds}}) {
+      edges { node { id text createdAt channelId status dueAt shareMode } }
+    }
+  }"""
+  d=await bgql(q,{"orgId":org,"channelIds":[cid]})
+  edges=((d.get("posts") or {}).get("edges") or [])
+  c=con()
+  counts={r["status"]:r["n"] for r in c.execute("select status,count(*) n from offers group by status").fetchall()}
+  acts=[dict(x) for x in c.execute("select level,message,created_at from activity order by id desc limit 20").fetchall()]
+  c.close()
+  chans=[{"id":z.get("id"),"name":z.get("displayName") or z.get("name"),"service":z.get("service"),"paused":z.get("isQueuePaused")} for z in info.get("channels",[])]
+  return {"ok":1,"primary":{"id":cid,"name":gs("buffer_channel_name")},"channels":chans,"recent_sent":[(e or {}).get("node") for e in edges],"last_post":gs("last_post"),"automation":gs("automation"),"interval":gs("interval"),"counts":counts,"activity":acts}
+ except Exception as e:
+  return {"ok":0,"error":str(e)}
+
 @app.get("/api/activity")
 async def activity(r:Request):
  auth(r); c=con(); a=[dict(x) for x in c.execute("select * from activity order by id desc limit 80")]; c.close(); return a
