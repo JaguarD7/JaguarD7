@@ -658,20 +658,6 @@ async def scan():
 @app.post("/api/scan")
 async def scanapi(r:Request): auth(r); return {"ok":1,"added":await scan()}
 
-@app.get("/api/resume-publish-20260927")
-async def resume_publish_20260927():
- ss("automation","1"); ss("interval","30"); ss("max_day","48"); ss("mode","now"); ss("start","00:00"); ss("end","23:59")
- recover_stuck_offers()
- added=await scan()
- try:
-  msg=await publish_one(True)
- except Exception as e:
-  msg="ERROR: "+str(e)
- c=con()
- counts={r["status"]:r["n"] for r in c.execute("select status,count(*) n from offers group by status").fetchall()}
- c.close()
- return {"ok":1,"message":msg,"added":added,"counts":counts,"last_post":gs("last_post"),"automation":gs("automation"),"interval":gs("interval")}
-
 @app.get("/api/backup")
 async def public_backup():
  return {"ciphertext":build_encrypted_backup(),"updated_at":datetime.now(TZ).isoformat(timespec="seconds")}
