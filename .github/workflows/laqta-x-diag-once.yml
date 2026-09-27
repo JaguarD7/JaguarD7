@@ -1,0 +1,15 @@
+name: LAQTA X Diagnostic Once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/laqta-x-diag-once.yml"
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check X delivery
+        run: |
+          curl -fsS --retry 5 --retry-delay 8 https://laqta-control-center.onrender.com/api/x-diag-9271
