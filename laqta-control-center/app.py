@@ -156,6 +156,14 @@ def init():
  defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"15","max_day":"96","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA","last_source":""}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
+def recover_stuck_offers():
+ c=con()
+ try:
+  c.execute("update offers set status='new' where status='publishing'")
+  c.commit()
+ finally:
+  c.close()
+
 class Pwd(BaseModel): password:str
 class Settings(BaseModel):
  buffer_key:str|None=None; interval:int=120; max_day:int=8; mode:str="queue"; start:str="08:00"; end:str="23:30"; disclosure:str="قد نحصل على عمولة من بعض الروابط."
@@ -166,6 +174,7 @@ class Source(BaseModel): name:str; url:str
 async def up():
  init()
  await restore_backup()
+ recover_stuck_offers()
  # LAQTA always-on policy requested by owner: one verified offer every 15 minutes, up to 96/day.
  ss("interval","15"); ss("max_day","96"); ss("mode","now"); ss("start","00:00"); ss("end","23:59")
  if gs("buffer_key") and gs("buffer_channel"):
@@ -648,6 +657,20 @@ async def scan():
  log(f"فحص المصادر: تمت إضافة {added} عناصر"); return added
 @app.post("/api/scan")
 async def scanapi(r:Request): auth(r); return {"ok":1,"added":await scan()}
+
+@app.get("/api/resume-publish-20260927")
+async def resume_publish_20260927():
+ ss("automation","1"); ss("interval","30"); ss("max_day","48"); ss("mode","now"); ss("start","00:00"); ss("end","23:59")
+ recover_stuck_offers()
+ added=await scan()
+ try:
+  msg=await publish_one(True)
+ except Exception as e:
+  msg="ERROR: "+str(e)
+ c=con()
+ counts={r["status"]:r["n"] for r in c.execute("select status,count(*) n from offers group by status").fetchall()}
+ c.close()
+ return {"ok":1,"message":msg,"added":added,"counts":counts,"last_post":gs("last_post"),"automation":gs("automation"),"interval":gs("interval")}
 
 @app.get("/api/backup")
 async def public_backup():
