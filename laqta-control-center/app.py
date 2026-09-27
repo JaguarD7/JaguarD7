@@ -41,7 +41,7 @@ def log(m,l="info"):
 def auth(r):
  if not r.session.get("ok"): raise HTTPException(401,"login_required")
 
-BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","buffer_channels_json","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand","last_source")
+BACKUP_KEYS=("admin_hash","buffer_key","buffer_org","buffer_channel","buffer_channel_name","buffer_channels_json","automation","interval","max_day","mode","start","end","disclosure","last_post","pulse_last","brand","last_source","buffer_waiting")
 
 def canonical_offer_key(source,url,title=""):
  src=str(source or "").lower(); u=str(url or "").strip()
@@ -153,7 +153,7 @@ def init():
       c.execute("update offers set status='duplicate' where id=?",(r["id"],))
  except Exception:
   pass
- defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"15","max_day":"96","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA","last_source":""}
+ defs={"admin_hash":"","buffer_key":"","buffer_org":"","buffer_channel":"","buffer_channel_name":"","buffer_channels_json":"[]","automation":"0","interval":"15","max_day":"96","mode":"now","start":"00:00","end":"23:59","disclosure":"قد نحصل على عمولة من بعض الروابط.","last_post":"","pulse_last":"","brand":"لقطة | LAQTA","last_source":"","buffer_waiting":"0"}
  for k,v in defs.items(): c.execute("insert or ignore into settings values(?,?)",(k,v))
  c.commit(); c.close()
 def recover_stuck_offers():
@@ -199,7 +199,7 @@ async def logout(r:Request): r.session.clear(); return {"ok":1}
 @app.get("/api/status")
 async def status(r:Request):
  auth(r); today=datetime.now(TZ).date().isoformat(); c=con(); row=c.execute("select posts from counters where day=?",(today,)).fetchone(); new=c.execute("select count(*) n from offers where status='new'").fetchone()["n"]; posted=c.execute("select count(*) n from offers where status='posted'").fetchone()["n"]; c.close()
- return {"running":gs("automation")=="1","buffer":bool(gs("buffer_channel")),"channel":gs("buffer_channel_name"),"today":row["posts"] if row else 0,"new":new,"posted":posted,"last":gs("last_post")}
+ return {"running":gs("automation")=="1","buffer":bool(gs("buffer_channel")),"channel":gs("buffer_channel_name"),"today":row["posts"] if row else 0,"new":new,"posted":posted,"last":gs("last_post"),"buffer_waiting":gs("buffer_waiting","0")=="1"}
 @app.get("/api/settings")
 async def settings(r:Request):
  auth(r); return {"interval":int(gs("interval")),"max_day":int(gs("max_day")),"mode":gs("mode"),"start":gs("start"),"end":gs("end"),"disclosure":gs("disclosure"),"key_saved":bool(gs("buffer_key")),"channel":gs("buffer_channel_name")}
@@ -476,7 +476,7 @@ async def publish_text(text):
    result=d.get("createPost") or {}
    if result.get("message"): raise RuntimeError(result.get("message"))
    if not result.get("post"): raise RuntimeError("Buffer لم يرجع Post")
-   sent.append(result.get("post"))
+   sent.append(result.get("post")); ss("buffer_waiting","0")
   except Exception as e:
    errors.append(str(e))
  if not sent:
@@ -523,7 +523,13 @@ async def publish_one(force=False):
      await publish_text(compose(cand,live_tags))
     except Exception as e:
      msg=str(e)
-     if "already got this one scheduled or posted" in msg.lower() or "same thing twice" in msg.lower():
+     low=msg.lower()
+     if "posts left to schedule" in low or ("free plan" in low and ("schedule" in low or "post" in low)):
+      c.execute("update offers set status='new' where id=?",(cand["id"],)); c.commit()
+      ss("buffer_waiting","1")
+      log("Buffer Free ممتلئ؛ سيتم الانتظار حتى يتوفر مكان ثم استئناف النشر تلقائيًا","info")
+      return "Buffer ممتلئ — انتظار توفر خانة"
+     if "already got this one scheduled or posted" in low or "same thing twice" in low:
       c.execute("update offers set status='duplicate' where id=?",(cand["id"],))
       ts=now.isoformat(timespec="seconds")
       c.execute("insert or replace into history(fingerprint,posted_at) values(?,?)",(fp,ts))
