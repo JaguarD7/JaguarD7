@@ -1,8 +1,0 @@
-fastapi
-uvicorn[standard]
-httpx
-feedparser
-bcrypt
-cryptography
-itsdangerous
-python-multipart
