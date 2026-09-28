@@ -1,11 +1,2 @@
 fastapi
 uvicorn[standard]
-httpx
-feedparser
-bcrypt
-cryptography
-itsdangerous
-python-multipart
-Pillow
-arabic-reshaper
-python-bidi
