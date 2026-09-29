@@ -1,0 +1,43 @@
+name: Publish ONYX Mobile Direct APK
+
+on:
+  push:
+    branches:
+      - onyx-mobile-updates
+    paths:
+      - "onyx-mobile/chunks/**"
+      - "update.json"
+      - ".github/workflows/onyx-mobile-direct.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: onyx-mobile-direct-apk
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout update branch
+        uses: actions/checkout@v4
+        with:
+          ref: onyx-mobile-updates
+          fetch-depth: 0
+
+      - name: Rebuild direct APK
+        run: |
+          set -euo pipefail
+          cat onyx-mobile/chunks/apk.b64.part* > /tmp/ONYX-Mobile.apk.b64
+          base64 -d /tmp/ONYX-Mobile.apk.b64 > onyx-mobile/ONYX-Mobile.apk
+          test -s onyx-mobile/ONYX-Mobile.apk
+          unzip -t onyx-mobile/ONYX-Mobile.apk >/dev/null
+
+      - name: Publish direct APK
+        run: |
+          git config user.name "ONYX Mobile Builder"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f onyx-mobile/ONYX-Mobile.apk
+          git diff --cached --quiet || git commit -m "Publish direct ONYX Mobile APK [skip ci]"
+          git push origin HEAD:onyx-mobile-updates
