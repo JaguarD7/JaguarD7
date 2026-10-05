@@ -475,63 +475,8 @@ public sealed class ControllerEngine : IDisposable
             }
             if (!_controllerConnected) { _controllerConnected = true; StatusChanged?.Invoke(); }
             var p = state.Gamepad;
-            LastPhysical = p;
-
-            bool ltModePressed = p.LeftTrigger >= 28;
-
-            // Mode changes are edge-triggered: one transition only.
-            if (ltModePressed && !_prevLtModePressed && Mode != PlayMode.Defense)
-                SetMode(PlayMode.Defense);
-
-            if (Rising(p.Buttons, _prevButtons, XButtons.LeftShoulder))
-            {
-                // Always track LB for LB+RS skill chords, but only change mode if needed.
-                _lbDownAt = Stopwatch.GetTimestamp();
-                _lbChordConsumed = false;
-                _lbRawPassed = false;
-                _lbModeTransitionConsumed = Mode != PlayMode.Attack;
-                if (_lbModeTransitionConsumed)
-                {
-                    bool rsWasAlreadyHeld = _lastPhysicalRsMagnitude >= cfg.RsReleaseDeadzone;
-                    SetMode(PlayMode.Attack);
-                    // A right-stick hold that started in Defense was a player-switch intent.
-                    // It must return to center before Attack skills can arm.
-                    _rsLatched = rsWasAlreadyHeld;
-                }
-            }
-
-            if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
-            {
-                _lbChordConsumed = false;
-                _lbModeTransitionConsumed = false;
-                _lbRawPassed = false;
-            }
-
-            _prevLtModePressed = ltModePressed;
-
-            UpdateFacing(p);
-            var r = new VirtualReport { Buttons=p.Buttons, LT=p.LeftTrigger, RT=p.RightTrigger, LX=p.ThumbLX, LY=p.ThumbLY, RX=p.ThumbRX, RY=p.ThumbRY };
-
-            if (Mode == PlayMode.Attack) ApplyAttack(p, r, cfg);
-            else ApplyDefense(p, r, cfg);
-
-            if (_macro.Active)
-            {
-                // A skill macro owns all skill modifiers; physical sprint/modifiers cannot leak in.
-                r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
-                r.LT = 0;
-                r.RT = 0;
-                _macro.Apply(r);
-            }
-
-            if (cfg.DirtyMeta && Mode == PlayMode.Attack)
-            {
-                ApplyDirtyMeta(p, r, cfg);
-            }
-
+            var r = ProcessFrameForTest(p, cfg);
             Send(r);
-            _prevButtons = p.Buttons;
-            _lastPhysicalRsMagnitude = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
             ticks++;
             if (MsSince(hzStart) >= 1000)
             {
@@ -559,6 +504,87 @@ public sealed class ControllerEngine : IDisposable
                     Thread.SpinWait(32);
             }
         }
+    }
+
+    public VirtualReport ProcessFrameForTest(XInputGamepad p, AppConfig? cfgOverride = null)
+    {
+        AppConfig cfg = cfgOverride ?? _cfg;
+        LastPhysical = p;
+
+        bool ltModePressed = p.LeftTrigger >= 28;
+
+        // Mode changes are edge-triggered: one transition only.
+        if (ltModePressed && !_prevLtModePressed && Mode != PlayMode.Defense)
+            SetMode(PlayMode.Defense);
+
+        if (Rising(p.Buttons, _prevButtons, XButtons.LeftShoulder))
+        {
+            _lbDownAt = Stopwatch.GetTimestamp();
+            _lbChordConsumed = false;
+            _lbRawPassed = false;
+            _lbModeTransitionConsumed = Mode != PlayMode.Attack;
+            if (_lbModeTransitionConsumed)
+            {
+                bool rsWasAlreadyHeld = _lastPhysicalRsMagnitude >= cfg.RsReleaseDeadzone;
+                SetMode(PlayMode.Attack);
+                _rsLatched = rsWasAlreadyHeld;
+            }
+        }
+
+        if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
+        {
+            _lbChordConsumed = false;
+            _lbModeTransitionConsumed = false;
+            _lbRawPassed = false;
+        }
+
+        _prevLtModePressed = ltModePressed;
+
+        UpdateFacing(p);
+        var r = new VirtualReport
+        {
+            Buttons=p.Buttons, LT=p.LeftTrigger, RT=p.RightTrigger,
+            LX=p.ThumbLX, LY=p.ThumbLY, RX=p.ThumbRX, RY=p.ThumbRY
+        };
+
+        if (Mode == PlayMode.Attack) ApplyAttack(p, r, cfg);
+        else ApplyDefense(p, r, cfg);
+
+        if (_macro.Active)
+        {
+            r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
+            r.LT = 0;
+            r.RT = 0;
+            _macro.Apply(r);
+        }
+
+        if (cfg.DirtyMeta && Mode == PlayMode.Attack)
+            ApplyDirtyMeta(p, r, cfg);
+
+        _prevButtons = p.Buttons;
+        _lastPhysicalRsMagnitude = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
+        return r;
+    }
+
+    public void ResetInputStateForTest()
+    {
+        _prevButtons = 0;
+        _prevLtModePressed = false;
+        _rsLatched = false;
+        _prevRsMagnitude = 0;
+        _lbChordConsumed = false;
+        _lbModeTransitionConsumed = false;
+        _lbRawPassed = false;
+        _lastPhysicalRsMagnitude = 0;
+        _bActive = false;
+        _bNormalMode = false;
+        _bCapped = false;
+        _lowDrivenTail = false;
+        _pressOn = false;
+        _pressPhaseStart = 0;
+        _dirtyBoostUntil = 0;
+        _fidgetSnapUntil = 0;
+        _macro.Cancel();
     }
 
     private void UpdateFacing(XInputGamepad p)
