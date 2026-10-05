@@ -370,7 +370,9 @@ public sealed class ControllerEngine : IDisposable
     private long _lbDownAt;
     private bool _lbChordConsumed;
     private bool _lbModeTransitionConsumed;
+    private bool _lbRawPassed;
     private bool _prevLtModePressed;
+    private double _lastPhysicalRsMagnitude;
     private long _defensePressBlockUntil;
     private double _prevRsMagnitude;
 
@@ -461,6 +463,8 @@ public sealed class ControllerEngine : IDisposable
                 _prevRsMagnitude = 0;
                 _lbChordConsumed = false;
                 _lbModeTransitionConsumed = false;
+                _lbRawPassed = false;
+                _lastPhysicalRsMagnitude = 0;
                 _bActive = false;
                 _lowDrivenTail = false;
                 _pressOn = false;
@@ -484,15 +488,23 @@ public sealed class ControllerEngine : IDisposable
                 // Always track LB for LB+RS skill chords, but only change mode if needed.
                 _lbDownAt = Stopwatch.GetTimestamp();
                 _lbChordConsumed = false;
+                _lbRawPassed = false;
                 _lbModeTransitionConsumed = Mode != PlayMode.Attack;
                 if (_lbModeTransitionConsumed)
+                {
+                    bool rsWasAlreadyHeld = _lastPhysicalRsMagnitude >= cfg.RsReleaseDeadzone;
                     SetMode(PlayMode.Attack);
+                    // A right-stick hold that started in Defense was a player-switch intent.
+                    // It must return to center before Attack skills can arm.
+                    _rsLatched = rsWasAlreadyHeld;
+                }
             }
 
             if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
             {
                 _lbChordConsumed = false;
                 _lbModeTransitionConsumed = false;
+                _lbRawPassed = false;
             }
 
             _prevLtModePressed = ltModePressed;
@@ -505,8 +517,10 @@ public sealed class ControllerEngine : IDisposable
 
             if (_macro.Active)
             {
+                // A skill macro owns all skill modifiers; physical sprint/modifiers cannot leak in.
                 r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
                 r.LT = 0;
+                r.RT = 0;
                 _macro.Apply(r);
             }
 
@@ -517,6 +531,7 @@ public sealed class ControllerEngine : IDisposable
 
             Send(r);
             _prevButtons = p.Buttons;
+            _lastPhysicalRsMagnitude = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
             ticks++;
             if (MsSince(hzStart) >= 1000)
             {
@@ -578,32 +593,51 @@ public sealed class ControllerEngine : IDisposable
     private void ApplyAttack(XInputGamepad p, VirtualReport r, AppConfig cfg)
     {
         double rsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
-        r.RX = 0; r.RY = 0;
+        bool lbHeld = Btn(p.Buttons, XButtons.LeftShoulder);
+        var lbAge = _lbDownAt == 0 ? double.MaxValue : MsSince(_lbDownAt);
+
         if (rsMag < cfg.RsReleaseDeadzone) _rsLatched = false;
-        if (!_rsLatched && !_macro.Active && rsMag >= cfg.RsTriggerDeadzone && SkillReady(cfg))
+
+        // LB is a chord candidate only during the short intent window.
+        // Once native LB has been released to the game, RS is passed through until LB is released.
+        if (lbHeld && !_lbModeTransitionConsumed && !_lbChordConsumed && lbAge >= cfg.LbChordWindowMs)
+            _lbRawPassed = true;
+
+        if (_lbRawPassed)
         {
-            var dir = Cardinal(p.ThumbRX, p.ThumbRY);
-            var lb = Btn(p.Buttons, XButtons.LeftShoulder);
-            string key = (lb ? "LB_RS_" : "RS_") + dir;
-            if (cfg.SkillMap.TryGetValue(key, out var skillName))
+            r.RX = p.ThumbRX;
+            r.RY = p.ThumbRY;
+        }
+        else
+        {
+            r.RX = 0;
+            r.RY = 0;
+
+            bool lbSkillModifier = lbHeld &&
+                (!_lbModeTransitionConsumed || lbAge <= cfg.LbChordWindowMs);
+
+            if (!_rsLatched && !_macro.Active && rsMag >= cfg.RsTriggerDeadzone && SkillReady(cfg))
             {
-                if (lb) _lbChordConsumed = true;
-                var skill = SkillLibrary.Get(skillName);
-                _macro.Start(skill.Name, skill.Build(cfg.SkillStepMs), _facingRad);
-                LastAction = skill.Name;
-                _rsLatched = true;
+                var dir = Cardinal(p.ThumbRX, p.ThumbRY);
+                string key = (lbSkillModifier ? "LB_RS_" : "RS_") + dir;
+                if (cfg.SkillMap.TryGetValue(key, out var skillName))
+                {
+                    if (lbSkillModifier) _lbChordConsumed = true;
+                    var skill = SkillLibrary.Get(skillName);
+                    _macro.Start(skill.Name, skill.Build(cfg.SkillStepMs), _facingRad);
+                    LastAction = skill.Name;
+                    _rsLatched = true;
+                }
             }
         }
 
-        if (Btn(p.Buttons, XButtons.LeftShoulder))
+        if (lbHeld)
         {
-            var lbAge = _lbDownAt == 0 ? double.MaxValue : MsSince(_lbDownAt);
             if (ConflictRules.SuppressLb(_lbModeTransitionConsumed, _lbChordConsumed, lbAge, cfg.LbChordWindowMs))
                 r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.LeftShoulder);
         }
 
         // Manual face-button input always wins over a running skill macro.
-        // This prevents injected skill buttons from mixing with pass/shot/cross commands.
         if (_macro.Active && ConflictRules.ManualFaceOverride(p.Buttons))
         {
             _macro.Cancel();
@@ -612,6 +646,17 @@ public sealed class ControllerEngine : IDisposable
         }
 
         if (_macro.Active) return;
+
+        // A new manual pass/cross command cancels any automated shot tail.
+        if ((_bActive || _lowDrivenTail) &&
+            (Btn(p.Buttons, XButtons.A) || Btn(p.Buttons, XButtons.X) || Btn(p.Buttons, XButtons.Y)))
+        {
+            _bActive = false;
+            _lowDrivenTail = false;
+            _bNormalMode = false;
+            _bCapped = false;
+            LastAction = "Shot cancelled by manual input";
+        }
 
         if (Btn(p.Buttons, XButtons.A))
         {
@@ -626,7 +671,6 @@ public sealed class ControllerEngine : IDisposable
         HandleShotB(p, r, cfg);
 
         // The calibrated B state machine owns shot modifiers while active.
-        // Do not let a held LB/RB accidentally turn it into Chip/Finesse/Power Shot.
         if (ConflictRules.ShotOwnsModifiers(_bActive, _lowDrivenTail))
             r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
     }
@@ -794,6 +838,10 @@ public sealed class ControllerEngine : IDisposable
 
     private void ApplyDirtyMeta(XInputGamepad p, VirtualReport r, AppConfig cfg)
     {
+        // Never alter aim/movement while the user is committing a face-button action or shot.
+        if (_bActive || _lowDrivenTail || ConflictRules.ManualFaceOverride(p.Buttons))
+            return;
+
         long now = Stopwatch.GetTimestamp();
         if (now < _dirtyBoostUntil)
         {
