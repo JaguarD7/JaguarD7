@@ -4,15 +4,28 @@ using Xunit;
 public class PrecisionTests
 {
     [Fact]
-    public void CoreMappingsExistAndAreUnique()
+    public void CoreMappingsAreAttackOnlyUniqueAndRsOnlySafe()
     {
         Assert.Equal(SkillLibrary.Skills.Count, SkillLibrary.Skills.Select(x => x.Name).Distinct().Count());
+
         var cfg = new AppConfig();
-        foreach (var key in new[]{"RS_UP","RS_RIGHT","RS_LEFT","RS_DOWN","LB_RS_UP","LB_RS_RIGHT","LB_RS_LEFT","LB_RS_DOWN"})
+        cfg.NormalizeAttackOnly();
+
+        var keys = new[]{"RS_UP","RS_RIGHT","RS_LEFT","RS_DOWN"};
+        Assert.Equal(4, cfg.SkillMap.Count);
+        Assert.Equal(4, keys.Select(k => cfg.SkillMap[k]).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        foreach (var key in keys)
         {
             Assert.True(cfg.SkillMap.ContainsKey(key), $"Missing mapping {key}");
-            Assert.Contains(SkillLibrary.Skills, s => s.Name == cfg.SkillMap[key]);
+            Assert.True(SkillLibrary.IsRsOnlySafe(cfg.SkillMap[key]), $"{key} is not RS-only safe");
         }
+
+        Assert.DoesNotContain(cfg.SkillMap.Keys, k => k.StartsWith("LB_RS_", StringComparison.OrdinalIgnoreCase));
+        Assert.True(cfg.DirtyMeta);
+        Assert.False(cfg.AutoPress);
+        Assert.False(cfg.SprintJockeyAssist);
+        Assert.False(cfg.HardTackleAssist);
     }
 
     [Fact]
@@ -24,7 +37,7 @@ public class PrecisionTests
         Assert.True(c.BNormalShotCapMs > c.BTapThresholdMs);
         Assert.InRange(c.LowDrivenSecondTapGapMs, 10, 100);
         Assert.InRange(c.LowDrivenSecondTapMs, 20, 100);
-        Assert.InRange(c.LbChordWindowMs, 30, 160);
+        Assert.InRange(c.RsRearmMs, 40, 250);
         Assert.InRange(c.InputLoopHz, 250, 1000);
     }
 
@@ -123,12 +136,24 @@ public class PrecisionTests
     }
 
     [Fact]
-    public void LbModeTransitionIsConsumedUntilRelease()
+    public void DefaultMappedSkillsNeverInjectButtonsTriggersOrLs()
     {
-        Assert.True(ConflictRules.SuppressLb(true, false, 500, 85));
-        Assert.True(ConflictRules.SuppressLb(false, true, 500, 85));
-        Assert.True(ConflictRules.SuppressLb(false, false, 40, 85));
-        Assert.False(ConflictRules.SuppressLb(false, false, 120, 85));
+        var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
+
+        foreach (var name in cfg.SkillMap.Values)
+        {
+            Assert.True(SkillLibrary.IsRsOnlySafe(name));
+            foreach (var step in SkillLibrary.Get(name).Build(52))
+            {
+                Assert.Equal((XButtons)0, step.Down);
+                Assert.Equal((XButtons)0, step.Up);
+                Assert.Null(step.Lt);
+                Assert.Null(step.Rt);
+                Assert.Equal(Dir.None, step.Ls);
+                Assert.False(step.NeutralLs);
+            }
+        }
     }
 
     [Fact]
