@@ -1424,6 +1424,9 @@ public sealed class MainForm : Form
     private readonly AppConfig _cfg;
     private readonly ControllerEngine _engine;
     private readonly System.Windows.Forms.Timer _uiTimer;
+    private readonly System.Windows.Forms.Timer _controllerRetryTimer;
+    private bool _controllerInitBusy;
+    private bool _engineStarted;
     private readonly Panel _content = new();
     private readonly Label _modeBadge = new();
     private readonly Label _controllerBadge = new();
@@ -1465,40 +1468,73 @@ public sealed class MainForm : Form
 
         ShowPage("dashboard");
 
-        Shown += async (_,_) => await InitializeControllerPipelineAsync();
+        Shown += async (_,_) =>
+        {
+            if (await AutoUpdater.CheckAndApplyAsync(this, false))
+            {
+                Close();
+                return;
+            }
+            await InitializeControllerPipelineAsync(true);
+        };
 
         _uiTimer = new System.Windows.Forms.Timer { Interval = 60 };
         _uiTimer.Tick += (_,_) => UpdateStatus();
         _uiTimer.Start();
-        FormClosing += (_,_) => { _cfg.Save(); _engine.Dispose(); };
+
+        _controllerRetryTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+        _controllerRetryTimer.Tick += async (_,_) =>
+        {
+            if (!_engineStarted && !_controllerInitBusy)
+                await InitializeControllerPipelineAsync(false);
+        };
+        _controllerRetryTimer.Start();
+
+        FormClosing += (_,_) =>
+        {
+            _controllerRetryTimer.Stop();
+            _uiTimer.Stop();
+            _cfg.Save();
+            _engine.Dispose();
+        };
     }
 
-    private async Task InitializeControllerPipelineAsync()
+    private async Task InitializeControllerPipelineAsync(bool showMessage)
     {
+        if (_controllerInitBusy || _engineStarted) return;
+        _controllerInitBusy = true;
         try
         {
             _singleBadge.Text = T("… فحص اليد","… CHECKING PAD");
             _singleBadge.ForeColor = Color.Gold;
 
+            var previousMessage = _singleController.Message;
             var state = await Task.Run(HidHideManager.Prepare);
             if (IsDisposed) return;
 
             _singleController = state;
-            ShowPage(_page);
+            if ((_page == "dashboard" || _page == "controller") &&
+                !string.Equals(previousMessage, state.Message, StringComparison.Ordinal))
+                ShowPage(_page);
             UpdateStatus();
 
             if (state.Ready)
             {
                 _engine.Start();
+                _engineStarted = true;
+                _controllerRetryTimer?.Stop();
                 UpdateStatus();
                 return;
             }
 
-            MessageBox.Show(
-                state.Message,
-                "FC27 Assist — Single Controller Mode",
-                MessageBoxButtons.OK,
-                state.HidHideInstalled ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            if (showMessage)
+            {
+                MessageBox.Show(
+                    state.Message,
+                    "FC27 Assist — Single Controller Mode",
+                    MessageBoxButtons.OK,
+                    state.HidHideInstalled ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            }
         }
         catch (Exception ex)
         {
@@ -1506,13 +1542,20 @@ public sealed class MainForm : Form
             _singleController = new(
                 false, false, false, false, false, false,
                 "Single Controller setup failed: " + ex.Message, 0, 0);
-            ShowPage(_page);
+            if (_page == "dashboard" || _page == "controller") ShowPage(_page);
             UpdateStatus();
-            MessageBox.Show(
-                _singleController.Message + "\n\nCrash log: " + CrashLogger.Path,
-                "FC27 Assist",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+            if (showMessage)
+            {
+                MessageBox.Show(
+                    _singleController.Message + "\n\nCrash log: " + CrashLogger.Path,
+                    "FC27 Assist",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+        finally
+        {
+            _controllerInitBusy = false;
         }
     }
 
@@ -1644,10 +1687,28 @@ public sealed class MainForm : Form
 
     private Control BuildController()
     {
-        var root=Stack();root.Controls.Add(Title(T("اختبار يد Xbox","Xbox Controller Test"),T("راقب الإدخال الخام والوضع الحالي قبل فتح المباراة.","Watch raw input and current mode before opening a match.")));
-        var p=PanelCard(390);p.Controls.Add(BigLabel(T("Live Input","LIVE INPUT")));
-        var live=new Label{Name="liveInput",Dock=DockStyle.Fill,Font=new Font("Consolas",12),ForeColor=_cyan,Padding=new Padding(0,15,0,0)};p.Controls.Add(live);root.Controls.Add(p);
-        var h=PanelCard(155);h.Controls.Add(BigLabel(T("مهم لمنع الإدخال المكرر","IMPORTANT: PREVENT DOUBLE INPUT")));var l=new Label{Dock=DockStyle.Fill,ForeColor=_muted,Text=T("استخدم HidHide لإخفاء اليد الحقيقية عن FC27 والسماح لـ FC27Assist برؤيتها. إذا اللعبة شافت اليد الحقيقية والافتراضية معًا قد تحصل ضغطات مزدوجة.","Use HidHide to hide the physical controller from FC27 while whitelisting FC27Assist. If the game sees both physical and virtual pads, duplicate input can occur."),Padding=new Padding(0,10,0,0)};h.Controls.Add(l);root.Controls.Add(h);return root;
+        var root=Stack();
+        root.Controls.Add(Title(T("اختبار يد Xbox","Xbox Controller Test"),T("راقب الإدخال الخام والوضع الحالي قبل فتح المباراة.","Watch raw input and current mode before opening a match.")));
+
+        var p=PanelCard(430);
+        p.Controls.Add(BigLabel(T("Live Input","LIVE INPUT")));
+        var rescan=new Button{Name="rescanController",Text=T("إعادة فحص اليد","RESCAN CONTROLLER"),Dock=DockStyle.Bottom,Height=44};
+        StyleButton(rescan,true);
+        rescan.Click += async (_,_) => await InitializeControllerPipelineAsync(true);
+        p.Controls.Add(rescan);
+        var live=new Label{Name="liveInput",Dock=DockStyle.Fill,Font=new Font("Consolas",12),ForeColor=_cyan,Padding=new Padding(0,15,0,0)};
+        p.Controls.Add(live);
+        root.Controls.Add(p);
+
+        var h=PanelCard(175);
+        h.Controls.Add(BigLabel(T("Single Controller Mode","SINGLE CONTROLLER MODE")));
+        var l=new Label{Dock=DockStyle.Fill,ForeColor=_muted,
+            Text=_singleController.Message + "\n\n" +
+                T("بعد فصل وتركيب USB البرنامج يعيد الفحص تلقائيًا كل ثانيتين.","After USB reconnect, the app rescans automatically every two seconds."),
+            Padding=new Padding(0,10,0,0)};
+        h.Controls.Add(l);
+        root.Controls.Add(h);
+        return root;
     }
 
     private Control BuildSettings()
@@ -1667,7 +1728,11 @@ public sealed class MainForm : Form
         AddNumeric(table,9,T("LB Skill Chord Window (ms)","LB Skill Chord Window (ms)"),_cfg.LbChordWindowMs,30,160,v=>_cfg.LbChordWindowMs=v);
         AddNumeric(table,10,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,250,1000,v=>_cfg.InputLoopHz=v);
         p.Controls.Add(table);root.Controls.Add(p);
-        var buttons=PanelCard(135);var reset=new Button{Text=T("استعادة الإعدادات الافتراضية","RESET DEFAULTS"),Dock=DockStyle.Left,Width=220};StyleButton(reset,false);reset.Click+=(_,_)=>{var fresh=new AppConfig{Language=_cfg.Language};CopyConfig(fresh,_cfg);SaveAndRefresh("settings");};buttons.Controls.Add(reset);var save=new Button{Text=T("حفظ","SAVE"),Dock=DockStyle.Right,Width=180};StyleButton(save,true);save.Click+=(_,_)=>SaveCfg();buttons.Controls.Add(save);root.Controls.Add(buttons);return root;
+        var buttons=PanelCard(135);
+        var reset=new Button{Text=T("استعادة الإعدادات الافتراضية","RESET DEFAULTS"),Dock=DockStyle.Left,Width=220};StyleButton(reset,false);reset.Click+=(_,_)=>{var fresh=new AppConfig{Language=_cfg.Language};CopyConfig(fresh,_cfg);SaveAndRefresh("settings");};buttons.Controls.Add(reset);
+        var update=new Button{Text=T("فحص التحديث","CHECK UPDATE"),Dock=DockStyle.Left,Width=190};StyleButton(update,false);update.Click+=async (_,_)=>{if(await AutoUpdater.CheckAndApplyAsync(this,true)) Close();};buttons.Controls.Add(update);update.BringToFront();
+        var save=new Button{Text=T("حفظ","SAVE"),Dock=DockStyle.Right,Width=180};StyleButton(save,true);save.Click+=(_,_)=>SaveCfg();buttons.Controls.Add(save);
+        root.Controls.Add(buttons);return root;
     }
 
     private void CopyConfig(AppConfig src, AppConfig dst)
