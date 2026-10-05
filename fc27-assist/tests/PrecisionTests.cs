@@ -43,6 +43,8 @@ public class PrecisionTests
         Assert.InRange(c.LowDrivenSecondTapMs, 20, 100);
         Assert.InRange(c.RsRearmMs, 40, 250);
         Assert.InRange(c.LbChordWindowMs, 40, 120);
+        Assert.InRange(c.MoveResponsePercent, 100, 135);
+        Assert.InRange(c.TurnBoostMs, 20, 90);
         Assert.InRange(c.InputLoopHz, 500, 1000);
     }
 
