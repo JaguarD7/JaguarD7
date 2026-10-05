@@ -399,6 +399,7 @@ public sealed class ControllerEngine : IDisposable
     private ViGEmClient? _client;
     private IXbox360Controller? _virtual;
     private Action? _submit;
+    private int _physicalSlot = -1;
     private bool _controllerConnected;
     private bool _vigemReady;
     private ushort _prevButtons;
@@ -455,6 +456,13 @@ public sealed class ControllerEngine : IDisposable
     public void Start()
     {
         if (_running) return;
+
+        // Lock onto the physical XInput slot before creating the virtual controller.
+        // This avoids accidentally reading our own ViGEm output if XInput ordering changes.
+        _physicalSlot = ResolvePhysicalSlot(_cfg.ControllerSlot);
+        if (_physicalSlot < 0)
+            Error = "No physical Xbox controller detected before virtual controller startup.";
+
         try
         {
             _client = new ViGEmClient();
@@ -474,6 +482,18 @@ public sealed class ControllerEngine : IDisposable
         _running = true;
         _thread = new Thread(Loop) { IsBackground = true, Name = "FC27Assist.Input", Priority = ThreadPriority.AboveNormal };
         _thread.Start();
+    }
+
+    private static int ResolvePhysicalSlot(int preferred)
+    {
+        if (preferred >= 0 && preferred <= 3 && XInputNative.TryGetState(preferred, out _))
+            return preferred;
+
+        for (int i = 0; i < 4; i++)
+            if (XInputNative.TryGetState(i, out _))
+                return i;
+
+        return -1;
     }
 
     private static double MsSince(long t) => (Stopwatch.GetTimestamp() - t) * 1000.0 / Stopwatch.Frequency;
@@ -507,7 +527,8 @@ public sealed class ControllerEngine : IDisposable
         while (_running)
         {
             AppConfig cfg; lock (_gate) cfg = _cfg;
-            if (!XInputNative.TryGetState(cfg.ControllerSlot, out var state))
+            int inputSlot = _physicalSlot >= 0 ? _physicalSlot : cfg.ControllerSlot;
+            if (!XInputNative.TryGetState(inputSlot, out var state))
             {
                 if (_controllerConnected) { _controllerConnected = false; StatusChanged?.Invoke(); }
                 _prevButtons = 0;
