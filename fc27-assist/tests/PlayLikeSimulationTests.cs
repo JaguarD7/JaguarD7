@@ -107,6 +107,43 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
+    public void HeldRsDirectionTriggersOnlyOnceUntilCentered()
+    {
+        var cfg = new AppConfig { AutoPress=false, DirtyMeta=false, SkillCooldownMs=60, RsRearmMs=70 };
+        using var e = Engine(cfg);
+
+        e.ProcessFrameForTest(Pad(ry:30000), cfg);
+        Assert.Equal("Explosive Stepover", e.LastAction);
+
+        // Cancel the macro manually, then keep the same physical RS direction held.
+        e.ProcessFrameForTest(Pad(XButtons.A, ry:30000), cfg);
+        Assert.Equal("Manual override", e.LastAction);
+
+        Thread.Sleep(cfg.SkillCooldownMs + 100);
+        for (int i = 0; i < 6; i++)
+        {
+            e.ProcessFrameForTest(Pad(ry:30000), cfg);
+            Thread.Sleep(20);
+        }
+
+        // A held stick must not start the command again.
+        Assert.Equal("Manual override", e.LastAction);
+
+        // A brief center bounce is not enough to re-arm.
+        e.ProcessFrameForTest(Pad(), cfg);
+        Thread.Sleep(20);
+        e.ProcessFrameForTest(Pad(ry:30000), cfg);
+        Assert.Equal("Manual override", e.LastAction);
+
+        // Only a deliberate center hold re-arms the next flick.
+        e.ProcessFrameForTest(Pad(), cfg);
+        Thread.Sleep(cfg.RsRearmMs + 20);
+        e.ProcessFrameForTest(Pad(), cfg);
+        e.ProcessFrameForTest(Pad(ry:30000), cfg);
+        Assert.Equal("Explosive Stepover", e.LastAction);
+    }
+
+    [Fact]
     public void RunningSkillSuppressesPhysicalSprintAndModifiers()
     {
         var cfg = new AppConfig { AutoPress=false };
