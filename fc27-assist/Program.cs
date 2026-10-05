@@ -153,16 +153,18 @@ public sealed class AppConfig
     public bool DirtyMeta { get; set; } = true;
     public int RsTriggerDeadzone { get; set; } = 18500;
     public int RsReleaseDeadzone { get; set; } = 9000;
-    public int RsRearmMs { get; set; } = 70;
-    public int SkillStepMs { get; set; } = 42;
-    public int SkillCooldownMs { get; set; } = 90;
-    public int BTapThresholdMs { get; set; } = 160;
-    public int LowDrivenChargeMs { get; set; } = 250;
-    public int BNormalShotCapMs { get; set; } = 430;
-    public int LowDrivenSecondTapGapMs { get; set; } = 22;
-    public int LowDrivenSecondTapMs { get; set; } = 34;
-    public int LbChordWindowMs { get; set; } = 65;
-    public int InputLoopHz { get; set; } = 500;
+    public int RsRearmMs { get; set; } = 55;
+    public int SkillStepMs { get; set; } = 36;
+    public int SkillCooldownMs { get; set; } = 60;
+    public int BTapThresholdMs { get; set; } = 145;
+    public int LowDrivenChargeMs { get; set; } = 230;
+    public int BNormalShotCapMs { get; set; } = 470;
+    public int LowDrivenSecondTapGapMs { get; set; } = 20;
+    public int LowDrivenSecondTapMs { get; set; } = 32;
+    public int LbChordWindowMs { get; set; } = 55;
+    public int PassPulseMs { get; set; } = 48;
+    public int DirtyExitBoostMs { get; set; } = 165;
+    public int InputLoopHz { get; set; } = 750;
     public bool AutoPress { get; set; } = true;
     public string PressureStrength { get; set; } = "Balanced";
     public bool SprintJockeyAssist { get; set; } = true;
@@ -188,22 +190,23 @@ public sealed class AppConfig
 
     public void NormalizeAttackOnly()
     {
-        DirtyMeta = true;
         AutoPress = false;
         SprintJockeyAssist = false;
         HardTackleAssist = false;
 
-        // Migrate the previous slower defaults without overriding intentional tuning.
-        if (RsRearmMs == 90) RsRearmMs = 70;
-        if (SkillStepMs == 52) SkillStepMs = 42;
-        if (SkillCooldownMs == 130) SkillCooldownMs = 90;
-        if (LbChordWindowMs == 85) LbChordWindowMs = 65;
-        if (BTapThresholdMs == 180) BTapThresholdMs = 160;
-        if (LowDrivenChargeMs == 420) LowDrivenChargeMs = 250;
-        if (BNormalShotCapMs == 620) BNormalShotCapMs = 430;
-        if (LowDrivenSecondTapGapMs == 30) LowDrivenSecondTapGapMs = 22;
-        if (LowDrivenSecondTapMs == 45) LowDrivenSecondTapMs = 34;
-        InputLoopHz = Math.Max(500, InputLoopHz);
+        // Migrate previous presets into the faster master Dirty profile.
+        if (RsRearmMs == 90 || RsRearmMs == 70) RsRearmMs = 55;
+        if (SkillStepMs == 52 || SkillStepMs == 42) SkillStepMs = 36;
+        if (SkillCooldownMs == 130 || SkillCooldownMs == 90) SkillCooldownMs = 60;
+        if (LbChordWindowMs == 85 || LbChordWindowMs == 65) LbChordWindowMs = 55;
+        if (BTapThresholdMs == 180 || BTapThresholdMs == 160) BTapThresholdMs = 145;
+        if (LowDrivenChargeMs == 420 || LowDrivenChargeMs == 250) LowDrivenChargeMs = 230;
+        if (BNormalShotCapMs == 620 || BNormalShotCapMs == 430) BNormalShotCapMs = 470;
+        if (LowDrivenSecondTapGapMs == 30 || LowDrivenSecondTapGapMs == 22) LowDrivenSecondTapGapMs = 20;
+        if (LowDrivenSecondTapMs == 45 || LowDrivenSecondTapMs == 34) LowDrivenSecondTapMs = 32;
+        if (PassPulseMs <= 0) PassPulseMs = 48;
+        if (DirtyExitBoostMs <= 0) DirtyExitBoostMs = 165;
+        InputLoopHz = Math.Max(750, InputLoopHz);
 
         var defaults = DefaultAttackSkillMap();
         var keys = defaults.Keys.ToArray();
@@ -948,12 +951,16 @@ public sealed class ControllerEngine : IDisposable
     private long _physicalLostSince;
     private long _lastVirtualRetry;
     private long _lastLoopHeartbeat;
+    private long _passPulseUntil;
+    private XButtons _passPulseButton;
+    private volatile bool _assistEnabled;
     private System.Threading.Timer? _watchdog;
 
     public PlayMode Mode { get; private set; } = PlayMode.Attack;
     public bool Connected => _controllerConnected;
     public int PhysicalSlot => _physicalSlot;
     public bool ViGEmReady => _vigemReady;
+    public bool AssistEnabled => _assistEnabled;
     public string LastAction { get; private set; } = "Ready";
     public XInputGamepad LastPhysical { get; private set; }
     public double LoopHz { get; private set; }
@@ -964,16 +971,34 @@ public sealed class ControllerEngine : IDisposable
     public ControllerEngine(AppConfig cfg)
     {
         _cfg = cfg;
+        _assistEnabled = cfg.DirtyMeta;
         _macro.Finished += name =>
         {
             _lastSkillEnd = Stopwatch.GetTimestamp();
             _macroFromLbLayer = false;
-            if (_cfg.DirtyMeta)
-                _dirtyBoostUntil = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 0.12);
+            if (_assistEnabled)
+                _dirtyBoostUntil = Stopwatch.GetTimestamp() +
+                    (long)(Stopwatch.Frequency * (Math.Clamp(_cfg.DirtyExitBoostMs, 80, 260) / 1000.0));
         };
     }
 
-    public void UpdateConfig(AppConfig cfg) { lock (_gate) _cfg = cfg; }
+    public void UpdateConfig(AppConfig cfg)
+    {
+        lock (_gate) _cfg = cfg;
+        _assistEnabled = cfg.DirtyMeta;
+    }
+
+    public void SetAssistEnabled(bool enabled)
+    {
+        _assistEnabled = enabled;
+        lock (_gate) _cfg.DirtyMeta = enabled;
+
+        // Cancel every synthetic state immediately so toggling OFF is true raw passthrough.
+        ResetInputStateForTest();
+        SendNeutral();
+        LastAction = enabled ? "DIRTY SYSTEM ON" : "DIRTY SYSTEM OFF";
+        StatusChanged?.Invoke();
+    }
 
     public void Start()
     {
@@ -1239,6 +1264,24 @@ public sealed class ControllerEngine : IDisposable
         AppConfig cfg = cfgOverride ?? _cfg;
         LastPhysical = p;
 
+        bool assist = cfgOverride is not null ? cfg.DirtyMeta : _assistEnabled;
+        if (!assist)
+        {
+            // Master OFF means strict 1:1 controller passthrough.
+            var raw = new VirtualReport
+            {
+                Buttons = p.Buttons,
+                LT = p.LeftTrigger,
+                RT = p.RightTrigger,
+                LX = p.ThumbLX,
+                LY = p.ThumbLY,
+                RX = p.ThumbRX,
+                RY = p.ThumbRY
+            };
+            _prevButtons = p.Buttons;
+            return raw;
+        }
+
         // Attack-only mode. LB is not a mode switch; it is only the selector
         // for the secondary RS skill layer. A short intent window keeps normal LB
         // player switching available while preventing LB+RS from becoming two commands.
@@ -1310,6 +1353,8 @@ public sealed class ControllerEngine : IDisposable
         _lbRawPassed = false;
         _lbSyntheticTapUntil = 0;
         _macroFromLbLayer = false;
+        _passPulseUntil = 0;
+        _passPulseButton = 0;
         _lastPhysicalRsMagnitude = 0;
         _blockedUntilReleaseMask = 0;
         _blockLtUntilRelease = false;
@@ -1451,18 +1496,46 @@ public sealed class ControllerEngine : IDisposable
             LastAction = "Shot cancelled by manual input";
         }
 
-        if (Btn(p.Buttons, XButtons.A))
+        long passNow = Stopwatch.GetTimestamp();
+        bool aRise = Rising(p.Buttons, _prevButtons, XButtons.A);
+        bool yRise = Rising(p.Buttons, _prevButtons, XButtons.Y);
+
+        if (aRise)
         {
-            // Fast/Driven Ground Pass.
-            r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.A | XButtons.RightShoulder)) &
-                                 ~(ushort)XButtons.LeftShoulder);
+            _passPulseButton = XButtons.A;
+            _passPulseUntil = passNow +
+                (long)(Stopwatch.Frequency * (Math.Clamp(cfg.PassPulseMs, 25, 90) / 1000.0));
+            LastAction = "Fast Driven Ground Pass";
+        }
+        else if (yRise)
+        {
+            _passPulseButton = XButtons.Y;
+            _passPulseUntil = passNow +
+                (long)(Stopwatch.Frequency * (Math.Clamp(cfg.PassPulseMs, 25, 90) / 1000.0));
+            LastAction = "Ground Through Pass";
         }
 
-        if (Btn(p.Buttons, XButtons.Y))
+        if (passNow < _passPulseUntil)
         {
-            // Always keep Y as a normal ground through pass.
-            r.Buttons = (ushort)((r.Buttons | (ushort)XButtons.Y) &
-                                 ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
+            // Keep a quick tap alive just long enough to register cleanly.
+            // LS remains untouched, so pass direction is always the user's.
+            if (_passPulseButton == XButtons.A)
+            {
+                r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.A | XButtons.RightShoulder)) &
+                                     ~(ushort)XButtons.LeftShoulder);
+                r.RT = 0; // brief clean-pass window instead of sprinting through the kick animation
+            }
+            else if (_passPulseButton == XButtons.Y)
+            {
+                r.Buttons = (ushort)((r.Buttons | (ushort)XButtons.Y) &
+                                     ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
+                r.RT = 0;
+            }
+        }
+        else if (_passPulseUntil != 0)
+        {
+            _passPulseUntil = 0;
+            _passPulseButton = 0;
         }
 
         HandleShotB(p, r, cfg);
@@ -1476,7 +1549,7 @@ public sealed class ControllerEngine : IDisposable
     private bool SkillReady(AppConfig cfg)
     {
         if (_lastSkillEnd == 0) return true;
-        var cd = Math.Min(90, cfg.SkillCooldownMs);
+        var cd = Math.Clamp(cfg.SkillCooldownMs, 45, 160);
         return MsSince(_lastSkillEnd) >= cd;
     }
 
@@ -1730,6 +1803,8 @@ public sealed class MainForm : Form
     private readonly Label _latencyBadge = new();
     private readonly Label _singleBadge = new();
     private readonly Button _langBtn = new();
+    private const int WM_HOTKEY = 0x0312;
+    private const int DIRTY_HOTKEY_ID = 0xFC27;
     private SingleControllerState _singleController = new(
         false, false, false, false, false, false,
         "Checking Single Controller Mode...", 0, 0);
@@ -1745,6 +1820,33 @@ public sealed class MainForm : Form
 
     private bool Ar => _cfg.Language == "ar";
     private string T(string ar, string en) => Ar ? ar : en;
+
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        RegisterHotKey(Handle, DIRTY_HOTKEY_ID, 0, (uint)Keys.F6);
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        try { UnregisterHotKey(Handle, DIRTY_HOTKEY_ID); } catch { }
+        base.OnHandleDestroyed(e);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == DIRTY_HOTKEY_ID)
+        {
+            ToggleDirtySystem();
+            return;
+        }
+        base.WndProc(ref m);
+    }
 
     public MainForm()
     {
@@ -1913,12 +2015,37 @@ public sealed class MainForm : Form
         var root=Stack(); root.Controls.Add(Title(T("FC27 Assist — لوحة التحكم","FC27 Assist — Control Center"),T("وضع هجوم فقط لتقليل التعارضات والحفاظ على حركة اليد الطبيعية.","Attack-only mode to minimize conflicts while keeping native movement controls.")));
         var row=Row(3,190);
         row.Controls.Add(Card(T("الوضع الحالي","CURRENT MODE"), T("هجوم فقط ⚡","ATTACK ONLY ⚡"), T("LT / RT / LS تعمل طبيعي","LT / RT / LS stay native")));
-        row.Controls.Add(Card(T("Dirty Meta","DIRTY META"), T("مفعّل دائمًا","ALWAYS ON"), T("مهارات أسرع بدون لمس حركة LS","Faster skill layer without rewriting LS")));
+        row.Controls.Add(Card(T("النظام القذر","DIRTY SYSTEM"), _cfg.DirtyMeta?T("شغال ⚡","ON ⚡"):T("مطفأ","OFF"), _cfg.DirtyMeta?T("كل المساعدات فعالة","All assists active"):T("Raw 1:1 بدون تدخل","Raw 1:1 passthrough")));
         row.Controls.Add(Card(T("محرك اليد","CONTROLLER ENGINE"), _singleController.Ready ? T("يد واحدة","ONE CONTROLLER") : T("إعداد مطلوب","SETUP REQUIRED"), _singleController.Message));
         root.Controls.Add(row);
 
-        var dirty=PanelCard(170); var lbl=BigLabel(T("DIRTY META — أساسي دائمًا","DIRTY META — ALWAYS ON")); dirty.Controls.Add(lbl);
-        var ddesc=new Label{Text=T("Skill chaining أسرع + Explosive Exit. لا يتم تعديل LS حتى تبقى الحركة واتجاه التسديد تحت تحكمك بالكامل.","Faster skill chaining + Explosive Exit. LS is never rewritten, so movement and shot direction remain fully yours."),AutoSize=false,Height=72,Dock=DockStyle.Fill,ForeColor=_muted,Padding=new Padding(0,12,0,0)}; dirty.Controls.Add(ddesc); ddesc.BringToFront(); lbl.BringToFront();
+        var dirty=PanelCard(220);
+        var dirtyLayout=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=2};
+        dirtyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,68));
+        dirtyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,32));
+        dirtyLayout.RowStyles.Add(new RowStyle(SizeType.Absolute,46));
+        dirtyLayout.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+        dirtyLayout.Controls.Add(BigLabel(T("DIRTY SYSTEM — المفتاح الرئيسي","DIRTY SYSTEM — MASTER SWITCH")),0,0);
+        var dirtyDesc=new Label{
+            Dock=DockStyle.Fill,
+            ForeColor=_muted,
+            Padding=new Padding(0,8,10,0),
+            Text=T(
+                "ON: 8 مهارات + Fast Pass Pulse + Precision Shot + Explosive Exit + Fast Chaining.\nOFF: اليد تمر Raw 1:1 بدون أي تعديل من البرنامج.\nF6 يشغل/يطفي النظام كامل.",
+                "ON: 8 skills + Fast Pass Pulse + Precision Shot + Explosive Exit + Fast Chaining.\nOFF: strict raw 1:1 controller passthrough.\nF6 toggles the whole system.")
+        };
+        dirtyLayout.Controls.Add(dirtyDesc,0,1);
+
+        var master=new Button{
+            Text=_cfg.DirtyMeta?T("إطفاء النظام القذر","TURN DIRTY OFF"):T("تشغيل النظام القذر","TURN DIRTY ON"),
+            Dock=DockStyle.Fill,
+            Margin=new Padding(12,6,0,6)
+        };
+        StyleButton(master,_cfg.DirtyMeta);
+        master.Click+=(_,_)=>ToggleDirtySystem();
+        dirtyLayout.SetRowSpan(master,2);
+        dirtyLayout.Controls.Add(master,1,0);
+        dirty.Controls.Add(dirtyLayout);
         root.Controls.Add(dirty);
 
         var info=PanelCard(170); info.Controls.Add(BigLabel(T("منع التعارض","CONFLICT CONTROL")));
@@ -1951,8 +2078,8 @@ public sealed class MainForm : Form
             TextAlign=ContentAlignment.TopLeft,
             Padding=new Padding(4,10,4,4),
             Text=T(
-                $"B نقرة سريعة  →  Low Driven أرضي ودقيق\nB ضغط مستمر  →  شوت عادي مضبوط (حد القوة {_cfg.BNormalShotCapMs}ms)\nاتجاه التسديد  →  آخر اتجاه LS منك يثبت حتى خروج الكرة\nA  →  تمريرة أرضية سريعة Driven (RB+A)\nY  →  تمريرة بينية أرضية عادية",
-                $"Quick B tap  →  accurate Low Driven ground shot\nHold B  →  calibrated normal shot (power cap {_cfg.BNormalShotCapMs}ms)\nShot direction  →  your latest LS aim is held until the ball is struck\nA  →  fast Driven Ground Pass (RB+A)\nY  →  normal ground through pass")
+                $"B نقرة سريعة  →  Low Driven أرضي سريع ودقيق\nB ضغط مستمر  →  شوت عادي أقوى ومضبوط (حد القوة {_cfg.BNormalShotCapMs}ms)\nاتجاه التسديد  →  LS منك فقط ويثبت وقت الإطلاق\nA  →  Driven Ground Pass + Pass Pulse سريع\nY  →  بينية أرضية + Pass Pulse سريع\nبعد المهارة  →  Explosive Exit تلقائي قصير",
+                $"Quick B tap  →  fast accurate Low Driven ground shot\nHold B  →  stronger calibrated normal shot (power cap {_cfg.BNormalShotCapMs}ms)\nShot direction  →  your LS only, locked at release\nA  →  Driven Ground Pass + Fast Pass Pulse\nY  →  ground through pass + Fast Pass Pulse\nAfter a skill  →  short automatic Explosive Exit")
         },0,1);
         shot.Controls.Add(shotLayout);
         root.Controls.Add(shot);
@@ -2084,8 +2211,8 @@ public sealed class MainForm : Form
     private Control BuildSettings()
     {
         var root=Stack();root.Controls.Add(Title(T("الإعدادات الدقيقة","Precision Settings"),T("لا تغيّر التوقيت إلا بعد الاختبار في Practice Arena.","Only tune timing after testing in Practice Arena.")));
-        var p=PanelCard(640);p.Controls.Add(BigLabel(T("التوقيت والإدخال","TIMING & INPUT")));
-        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=12,Padding=new Padding(0,12,0,0)};table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
+        var p=PanelCard(745);p.Controls.Add(BigLabel(T("التوقيت والإدخال","TIMING & INPUT")));
+        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=14,Padding=new Padding(0,12,0,0)};table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
         AddNumeric(table,0,T("XInput Slot (0-3)","XInput Slot (0-3)"),_cfg.ControllerSlot,0,3,v=>_cfg.ControllerSlot=v);
         AddNumeric(table,1,T("RS Trigger Deadzone","RS Trigger Deadzone"),_cfg.RsTriggerDeadzone,10000,30000,v=>_cfg.RsTriggerDeadzone=v);
         AddNumeric(table,2,T("Skill Step (ms)","Skill Step (ms)"),_cfg.SkillStepMs,25,100,v=>_cfg.SkillStepMs=v);
@@ -2097,7 +2224,9 @@ public sealed class MainForm : Form
         AddNumeric(table,8,T("Low Driven 2nd Tap (ms)","Low Driven 2nd Tap (ms)"),_cfg.LowDrivenSecondTapMs,20,100,v=>_cfg.LowDrivenSecondTapMs=v);
         AddNumeric(table,9,T("RS إعادة التسليح (ms)","RS Rearm Center (ms)"),_cfg.RsRearmMs,40,250,v=>_cfg.RsRearmMs=v);
         AddNumeric(table,10,T("نافذة LB + RS (ms)","LB + RS Intent Window (ms)"),_cfg.LbChordWindowMs,40,120,v=>_cfg.LbChordWindowMs=v);
-        AddNumeric(table,11,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,250,1000,v=>_cfg.InputLoopHz=v);
+        AddNumeric(table,11,T("Pass Pulse (ms)","Pass Pulse (ms)"),_cfg.PassPulseMs,25,90,v=>_cfg.PassPulseMs=v);
+        AddNumeric(table,12,T("Explosive Exit (ms)","Explosive Exit (ms)"),_cfg.DirtyExitBoostMs,80,260,v=>_cfg.DirtyExitBoostMs=v);
+        AddNumeric(table,13,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,500,1000,v=>_cfg.InputLoopHz=v);
         p.Controls.Add(table);root.Controls.Add(p);
         var buttons=PanelCard(135);
         var reset=new Button{Text=T("استعادة الإعدادات الافتراضية","RESET DEFAULTS"),Dock=DockStyle.Left,Width=220};StyleButton(reset,false);reset.Click+=(_,_)=>{var fresh=new AppConfig{Language=_cfg.Language};CopyConfig(fresh,_cfg);SaveAndRefresh("settings");};buttons.Controls.Add(reset);
@@ -2109,7 +2238,7 @@ public sealed class MainForm : Form
     private void CopyConfig(AppConfig src, AppConfig dst)
     {
         var lang=dst.Language; var fresh=src;
-        dst.ControllerSlot=fresh.ControllerSlot;dst.DirtyMeta=fresh.DirtyMeta;dst.RsTriggerDeadzone=fresh.RsTriggerDeadzone;dst.RsReleaseDeadzone=fresh.RsReleaseDeadzone;dst.RsRearmMs=fresh.RsRearmMs;dst.SkillStepMs=fresh.SkillStepMs;dst.SkillCooldownMs=fresh.SkillCooldownMs;dst.BTapThresholdMs=fresh.BTapThresholdMs;dst.LowDrivenChargeMs=fresh.LowDrivenChargeMs;dst.BNormalShotCapMs=fresh.BNormalShotCapMs;dst.LowDrivenSecondTapGapMs=fresh.LowDrivenSecondTapGapMs;dst.LowDrivenSecondTapMs=fresh.LowDrivenSecondTapMs;dst.LbChordWindowMs=fresh.LbChordWindowMs;dst.InputLoopHz=fresh.InputLoopHz;dst.AutoPress=fresh.AutoPress;dst.PressureStrength=fresh.PressureStrength;dst.SprintJockeyAssist=fresh.SprintJockeyAssist;dst.HardTackleAssist=fresh.HardTackleAssist;dst.SkillMap=new Dictionary<string,string>(fresh.SkillMap);dst.Language=lang;
+        dst.ControllerSlot=fresh.ControllerSlot;dst.DirtyMeta=fresh.DirtyMeta;dst.RsTriggerDeadzone=fresh.RsTriggerDeadzone;dst.RsReleaseDeadzone=fresh.RsReleaseDeadzone;dst.RsRearmMs=fresh.RsRearmMs;dst.SkillStepMs=fresh.SkillStepMs;dst.SkillCooldownMs=fresh.SkillCooldownMs;dst.BTapThresholdMs=fresh.BTapThresholdMs;dst.LowDrivenChargeMs=fresh.LowDrivenChargeMs;dst.BNormalShotCapMs=fresh.BNormalShotCapMs;dst.LowDrivenSecondTapGapMs=fresh.LowDrivenSecondTapGapMs;dst.LowDrivenSecondTapMs=fresh.LowDrivenSecondTapMs;dst.LbChordWindowMs=fresh.LbChordWindowMs;dst.PassPulseMs=fresh.PassPulseMs;dst.DirtyExitBoostMs=fresh.DirtyExitBoostMs;dst.InputLoopHz=fresh.InputLoopHz;dst.AutoPress=fresh.AutoPress;dst.PressureStrength=fresh.PressureStrength;dst.SprintJockeyAssist=fresh.SprintJockeyAssist;dst.HardTackleAssist=fresh.HardTackleAssist;dst.SkillMap=new Dictionary<string,string>(fresh.SkillMap);dst.Language=lang;
     }
 
     private void AddNumeric(TableLayoutPanel t,int row,string name,int val,int min,int max,Action<int> set)
@@ -2154,7 +2283,8 @@ public sealed class MainForm : Form
     private void UpdateStatus()
     {
         if (IsDisposed) return;
-        _modeBadge.Text=T("⚡ هجوم فقط","⚡ ATTACK ONLY");_modeBadge.ForeColor=_accent;
+        _modeBadge.Text=_cfg.DirtyMeta?T("⚡ قذر ON","⚡ DIRTY ON"):T("○ قذر OFF","○ DIRTY OFF");
+        _modeBadge.ForeColor=_cfg.DirtyMeta?_accent:_muted;
         bool physicalOk = ProbePhysicalController(out var physicalSlot, out var physicalPad);
         _controllerBadge.Text=physicalOk?T($"● اليد متصلة S{physicalSlot}","● Physical OK S"+physicalSlot):T("○ اليد غير متصلة","○ Physical Lost");
         _controllerBadge.ForeColor=physicalOk?_accent:Color.OrangeRed;
@@ -2173,6 +2303,16 @@ public sealed class MainForm : Form
     }
 
     private static Control? FindByName(Control root,string name){if(root.Name==name)return root;foreach(Control c in root.Controls){var f=FindByName(c,name);if(f!=null)return f;}return null;}
+    private void ToggleDirtySystem()
+    {
+        _cfg.DirtyMeta = !_cfg.DirtyMeta;
+        _cfg.Save();
+        _engine.SetAssistEnabled(_cfg.DirtyMeta);
+        if (_page == "dashboard" || _page == "attack")
+            ShowPage(_page);
+        UpdateStatus();
+    }
+
     private void SaveCfg(){_cfg.NormalizeAttackOnly();_cfg.Save();_engine.UpdateConfig(_cfg);}
     private void SaveAndRefresh(string page){SaveCfg();ShowPage(page);UpdateStatus();}
     private void ToggleLanguage(){_cfg.Language=Ar?"en":"ar";_cfg.Save();BuildLanguageRefresh();}
