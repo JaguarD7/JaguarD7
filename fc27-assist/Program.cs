@@ -354,7 +354,10 @@ public sealed class ControllerEngine : IDisposable
     private short _snapLX, _snapLY;
     private long _lbDownAt;
     private bool _lbChordConsumed;
+    private bool _lbModeTransitionConsumed;
     private bool _prevLtModePressed;
+    private long _defensePressBlockUntil;
+    private double _prevRsMagnitude;
 
     public PlayMode Mode { get; private set; } = PlayMode.Attack;
     public bool Connected => _controllerConnected;
@@ -415,6 +418,11 @@ public sealed class ControllerEngine : IDisposable
         _rsLatched = false;
         _bActive = false;
         _lowDrivenTail = false;
+        _bNormalMode = false;
+        _dirtyBoostUntil = 0;
+        _fidgetSnapUntil = 0;
+        _pressOn = false;
+        _pressPhaseStart = 0;
         LastAction = mode == PlayMode.Attack ? "ATTACK MODE" : "DEFENSE MODE";
         StatusChanged?.Invoke();
     }
@@ -430,6 +438,11 @@ public sealed class ControllerEngine : IDisposable
             if (!XInputNative.TryGetState(cfg.ControllerSlot, out var state))
             {
                 if (_controllerConnected) { _controllerConnected = false; StatusChanged?.Invoke(); }
+                _prevButtons = 0;
+                _prevLtModePressed = false;
+                _rsLatched = false;
+                _prevRsMagnitude = 0;
+                _macro.Cancel();
                 Thread.Sleep(8);
                 continue;
             }
@@ -448,12 +461,16 @@ public sealed class ControllerEngine : IDisposable
                 // Always track LB for LB+RS skill chords, but only change mode if needed.
                 _lbDownAt = Stopwatch.GetTimestamp();
                 _lbChordConsumed = false;
-                if (Mode != PlayMode.Attack)
+                _lbModeTransitionConsumed = Mode != PlayMode.Attack;
+                if (_lbModeTransitionConsumed)
                     SetMode(PlayMode.Attack);
             }
 
             if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
+            {
                 _lbChordConsumed = false;
+                _lbModeTransitionConsumed = false;
+            }
 
             _prevLtModePressed = ltModePressed;
 
@@ -558,8 +575,18 @@ public sealed class ControllerEngine : IDisposable
         if (Btn(p.Buttons, XButtons.LeftShoulder))
         {
             var lbAge = _lbDownAt == 0 ? double.MaxValue : MsSince(_lbDownAt);
-            if (_lbChordConsumed || lbAge < cfg.LbChordWindowMs)
+            if (_lbModeTransitionConsumed || _lbChordConsumed || lbAge < cfg.LbChordWindowMs)
                 r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.LeftShoulder);
+        }
+
+        // Manual face-button input always wins over a running skill macro.
+        // This prevents injected skill buttons from mixing with pass/shot/cross commands.
+        if (_macro.Active && (Btn(p.Buttons, XButtons.A) || Btn(p.Buttons, XButtons.B) ||
+                             Btn(p.Buttons, XButtons.X) || Btn(p.Buttons, XButtons.Y)))
+        {
+            _macro.Cancel();
+            _lastSkillEnd = Stopwatch.GetTimestamp();
+            LastAction = "Manual override";
         }
 
         if (_macro.Active) return;
@@ -575,6 +602,11 @@ public sealed class ControllerEngine : IDisposable
         }
 
         HandleShotB(p, r, cfg);
+
+        // The calibrated B state machine owns shot modifiers while active.
+        // Do not let a held LB/RB accidentally turn it into Chip/Finesse/Power Shot.
+        if (_bActive || _lowDrivenTail)
+            r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
     }
 
     private bool SkillReady(AppConfig cfg)
@@ -694,7 +726,23 @@ public sealed class ControllerEngine : IDisposable
         _macro.Cancel();
         r.RX = p.ThumbRX; r.RY = p.ThumbRY;
 
-        if (cfg.AutoPress && !Btn(p.Buttons, XButtons.RightShoulder))
+        var now = Stopwatch.GetTimestamp();
+        var rsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
+        bool rsSwitchIntent = rsMag > 14500 && _prevRsMagnitude <= 14500;
+        _prevRsMagnitude = rsMag;
+
+        bool tackleOrKeeper = Btn(p.Buttons, XButtons.B) || Btn(p.Buttons, XButtons.X) || Btn(p.Buttons, XButtons.Y);
+        if (tackleOrKeeper || rsSwitchIntent)
+        {
+            // Never combine automatic RB pressure with a manual tackle/slide/keeper rush/player switch.
+            _defensePressBlockUntil = now + (long)(Stopwatch.Frequency * (tackleOrKeeper ? 0.28 : 0.16));
+            _pressOn = false;
+            _pressPhaseStart = now;
+        }
+
+        bool pressGuardActive = now < _defensePressBlockUntil;
+
+        if (cfg.AutoPress && !pressGuardActive && !Btn(p.Buttons, XButtons.RightShoulder))
         {
             int onMs = cfg.PressureStrength == "Aggressive" ? 430 : cfg.PressureStrength == "Low" ? 220 : 330;
             int offMs = cfg.PressureStrength == "Aggressive" ? 80 : cfg.PressureStrength == "Low" ? 220 : 130;
