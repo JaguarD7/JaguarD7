@@ -39,15 +39,14 @@ public class PrecisionTests
     }
 
     [Fact]
-    public void BallRollSpinUsesLbAndDirectionThenForward()
+    public void BallRollSpinUsesDirectionThenForwardWithoutModifier()
     {
         foreach (var name in new[]{"Ball Roll Spin Right","Ball Roll Spin Left"})
         {
-            var s = SkillLibrary.Get(name).Build(52);
-            Assert.True((s[0].Down & XButtons.LeftShoulder) != 0);
-            Assert.True((s[1].Down & XButtons.LeftShoulder) != 0);
-            Assert.Equal(Dir.Forward, s[1].Rs);
-            Assert.True((s[^1].Up & XButtons.LeftShoulder) != 0);
+            var steps = SkillLibrary.Get(name).Build(52);
+            Assert.Equal((XButtons)0, steps[0].Down & XButtons.LeftShoulder);
+            Assert.Equal((XButtons)0, steps[1].Down & XButtons.LeftShoulder);
+            Assert.Equal(Dir.Forward, steps[1].Rs);
         }
         Assert.Equal(Dir.Right, SkillLibrary.Get("Ball Roll Spin Right").Build(52)[0].Rs);
         Assert.Equal(Dir.Left, SkillLibrary.Get("Ball Roll Spin Left").Build(52)[0].Rs);
@@ -106,9 +105,57 @@ public class PrecisionTests
     }
 
     [Fact]
-    public void DragTurnStartsForward()
+    public void DragTurnStartsBackThenExitsSide()
     {
-        Assert.Equal(Dir.Forward, SkillLibrary.Get("Drag Turn Right").Build(52)[0].Rs);
-        Assert.Equal(Dir.Forward, SkillLibrary.Get("Drag Turn Left").Build(52)[0].Rs);
+        Assert.Equal(Dir.Back, SkillLibrary.Get("Drag Turn Right").Build(52)[0].Rs);
+        Assert.Equal(Dir.Right, SkillLibrary.Get("Drag Turn Right").Build(52)[1].Rs);
+        Assert.Equal(Dir.Back, SkillLibrary.Get("Drag Turn Left").Build(52)[0].Rs);
+        Assert.Equal(Dir.Left, SkillLibrary.Get("Drag Turn Left").Build(52)[1].Rs);
+    }
+
+    [Fact]
+    public void FakeDirectionMovesAreNotReversed()
+    {
+        var l = SkillLibrary.Get("Fake Left Go Right").Build(52);
+        Assert.Equal(new[]{Dir.Left,Dir.Back,Dir.Right}, l.Take(3).Select(x=>x.Rs).ToArray());
+        var r = SkillLibrary.Get("Fake Right Go Left").Build(52);
+        Assert.Equal(new[]{Dir.Right,Dir.Back,Dir.Left}, r.Take(3).Select(x=>x.Rs).ToArray());
+    }
+
+    [Fact]
+    public void LbModeTransitionIsConsumedUntilRelease()
+    {
+        Assert.True(ConflictRules.SuppressLb(true, false, 500, 85));
+        Assert.True(ConflictRules.SuppressLb(false, true, 500, 85));
+        Assert.True(ConflictRules.SuppressLb(false, false, 40, 85));
+        Assert.False(ConflictRules.SuppressLb(false, false, 120, 85));
+    }
+
+    [Fact]
+    public void ManualFaceButtonsOverrideSkillMacros()
+    {
+        Assert.True(ConflictRules.ManualFaceOverride((ushort)XButtons.A));
+        Assert.True(ConflictRules.ManualFaceOverride((ushort)XButtons.B));
+        Assert.True(ConflictRules.ManualFaceOverride((ushort)XButtons.X));
+        Assert.True(ConflictRules.ManualFaceOverride((ushort)XButtons.Y));
+        Assert.False(ConflictRules.ManualFaceOverride((ushort)XButtons.RightShoulder));
+    }
+
+    [Fact]
+    public void AutoPressIsBlockedByDefensiveManualActions()
+    {
+        Assert.True(ConflictRules.BlockAutoPress((ushort)XButtons.B, false));
+        Assert.True(ConflictRules.BlockAutoPress((ushort)XButtons.X, false));
+        Assert.True(ConflictRules.BlockAutoPress((ushort)XButtons.Y, false));
+        Assert.True(ConflictRules.BlockAutoPress(0, true));
+        Assert.False(ConflictRules.BlockAutoPress(0, false));
+    }
+
+    [Fact]
+    public void ShotAutomationOwnsLbRbModifiers()
+    {
+        Assert.True(ConflictRules.ShotOwnsModifiers(true, false));
+        Assert.True(ConflictRules.ShotOwnsModifiers(false, true));
+        Assert.False(ConflictRules.ShotOwnsModifiers(false, false));
     }
 }
