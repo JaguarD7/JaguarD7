@@ -133,15 +133,19 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void EightDefaultShortcutsAreAllDifferent()
+    public void CoreShortcutsUseTwoEasyPairsAndLbKeepsFourExtraMoves()
     {
         var cfg = new AppConfig();
         cfg.NormalizeAttackOnly();
 
         Assert.Equal(8, cfg.SkillMap.Count);
-        Assert.Equal(8, cfg.SkillMap.Values.Distinct(StringComparer.OrdinalIgnoreCase).Count());
-        Assert.Contains("RS_UP", cfg.SkillMap.Keys);
-        Assert.Contains("LB_RS_UP", cfg.SkillMap.Keys);
+        Assert.Equal(cfg.SkillMap["RS_UP"], cfg.SkillMap["RS_DOWN"]);
+        Assert.Equal(cfg.SkillMap["RS_RIGHT"], cfg.SkillMap["RS_LEFT"]);
+        Assert.Equal("Explosive Stepover", cfg.SkillMap["RS_UP"]);
+        Assert.Equal("Heel to Ball Roll", cfg.SkillMap["RS_RIGHT"]);
+
+        var lb = new[]{"LB_RS_UP","LB_RS_RIGHT","LB_RS_LEFT","LB_RS_DOWN"};
+        Assert.Equal(4, lb.Select(k => cfg.SkillMap[k]).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
     [Fact]
@@ -178,7 +182,7 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void RightAndLeftShortcutsResolveToDifferentCommands()
+    public void RightAndLeftShortcutsTriggerTheSameEasyEscapeSkill()
     {
         var cfg = new AppConfig { SkillCooldownMs=60, RsRearmMs=50 };
         cfg.NormalizeAttackOnly();
@@ -186,6 +190,7 @@ public class PlayLikeSimulationTests
 
         e.ProcessFrameForTest(Pad(rx:30000), cfg);
         var right = e.LastAction;
+        Assert.Contains(cfg.SkillMap["RS_RIGHT"], right);
 
         for(int i=0;i<10;i++)
         {
@@ -196,10 +201,9 @@ public class PlayLikeSimulationTests
 
         e.ProcessFrameForTest(Pad(rx:-30000), cfg);
         var left = e.LastAction;
+        Assert.Contains(cfg.SkillMap["RS_LEFT"], left);
 
-        Assert.Contains("RIGHT", right);
-        Assert.Contains("LEFT", left);
-        Assert.NotEqual(right, left);
+        Assert.Equal(cfg.SkillMap["RS_RIGHT"], cfg.SkillMap["RS_LEFT"]);
     }
 
     [Fact]
