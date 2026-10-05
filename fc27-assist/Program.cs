@@ -413,6 +413,7 @@ public sealed class ControllerEngine : IDisposable
     private void Loop()
     {
         long hzStart = Stopwatch.GetTimestamp();
+        long nextTick = Stopwatch.GetTimestamp();
         int ticks = 0;
         while (_running)
         {
@@ -463,7 +464,26 @@ public sealed class ControllerEngine : IDisposable
                 LoopHz = ticks * 1000.0 / Math.Max(1, MsSince(hzStart));
                 hzStart = Stopwatch.GetTimestamp(); ticks = 0;
             }
-            Thread.Sleep(1);
+            var targetHz = Math.Clamp(cfg.InputLoopHz, 250, 1000);
+            var tickTicks = Math.Max(1L, Stopwatch.Frequency / targetHz);
+            nextTick += tickTicks;
+            var nowTicks = Stopwatch.GetTimestamp();
+
+            // If Windows pre-empted us for too long, resync instead of accumulating timing debt.
+            if (nowTicks - nextTick > tickTicks * 4)
+                nextTick = nowTicks + tickTicks;
+
+            while (_running)
+            {
+                var remain = nextTick - Stopwatch.GetTimestamp();
+                if (remain <= 0) break;
+
+                // Coarse sleep first, then spin for the final sub-millisecond slice.
+                if (remain > Stopwatch.Frequency / 700)
+                    Thread.Sleep(1);
+                else
+                    Thread.SpinWait(32);
+            }
         }
     }
 
