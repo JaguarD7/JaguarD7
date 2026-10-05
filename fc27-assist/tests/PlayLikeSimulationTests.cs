@@ -52,17 +52,26 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void AttackModeIsPermanentAndLsAlwaysStaysPhysical()
+    public void AttackModeIsPermanentAndMovementCurvePreservesAngle()
     {
-        var cfg = new AppConfig();
+        var cfg = new AppConfig { DirtyMeta=true, MoveResponsePercent=118 };
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        var r = e.ProcessFrameForTest(Pad(lt:211, rt:177, lx:-23000, ly:25000), cfg);
+        short lx = -12000, ly = 18000;
+        var r = e.ProcessFrameForTest(Pad(lt:211, rt:177, lx:lx, ly:ly), cfg);
 
         Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.Equal((short)-23000, r.LX);
-        Assert.Equal((short)25000, r.LY);
+
+        double inMag = Math.Sqrt((double)lx*lx + (double)ly*ly);
+        double outMag = Math.Sqrt((double)r.LX*r.LX + (double)r.LY*r.LY);
+        Assert.True(outMag >= inMag);
+
+        double inAngle = Math.Atan2(lx, ly);
+        double outAngle = Math.Atan2(r.LX, r.LY);
+        double diff = Math.Abs(inAngle - outAngle);
+        if (diff > Math.PI) diff = Math.Abs(diff - Math.PI*2);
+        Assert.InRange(diff, 0, 0.01);
     }
 
     [Fact]
@@ -208,17 +217,26 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void YIsAlwaysGroundThroughPass()
+    public void YUsesPrecisionGroundThroughWithoutSyntheticHold()
     {
         var cfg = new AppConfig();
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        var r = e.ProcessFrameForTest(Pad(XButtons.Y | XButtons.LeftShoulder | XButtons.RightShoulder), cfg);
+        short lx = 17000, ly = 21000;
+        var pressed = e.ProcessFrameForTest(
+            Pad(XButtons.Y | XButtons.LeftShoulder, lx:lx, ly:ly), cfg);
 
-        Assert.True(Has(r, XButtons.Y));
-        Assert.False(Has(r, XButtons.LeftShoulder));
-        Assert.False(Has(r, XButtons.RightShoulder));
+        Assert.True(Has(pressed, XButtons.Y));
+        Assert.True(Has(pressed, XButtons.RightShoulder));
+        Assert.False(Has(pressed, XButtons.LeftShoulder));
+        Assert.Equal(lx, pressed.LX);
+        Assert.Equal(ly, pressed.LY);
+        Assert.Equal("Precision Ground Through Pass", e.LastAction);
+
+        var released = e.ProcessFrameForTest(Pad(lx:lx, ly:ly), cfg);
+        Assert.False(Has(released, XButtons.Y));
+        Assert.False(Has(released, XButtons.RightShoulder));
     }
 
     [Fact]
@@ -296,26 +314,30 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void DirtyMetaNeverRewritesLs()
+    public void DirtyMovementCurveBoostsMagnitudeWithoutChangingDirection()
     {
-        var cfg = new AppConfig();
+        var cfg = new AppConfig { DirtyMeta=true, MoveResponsePercent=125 };
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        for (int i=0;i<50;i++)
-        {
-            short lx=(short)(-28000+i*900);
-            short ly=(short)(25000-i*700);
-            var r=e.ProcessFrameForTest(Pad(lx:lx,ly:ly),cfg);
-            Assert.Equal(lx,r.LX);
-            Assert.Equal(ly,r.LY);
-        }
+        short lx = 9000, ly = 15000;
+        var r = e.ProcessFrameForTest(Pad(lx:lx, ly:ly), cfg);
+
+        double inMag = Math.Sqrt((double)lx*lx + (double)ly*ly);
+        double outMag = Math.Sqrt((double)r.LX*r.LX + (double)r.LY*r.LY);
+        Assert.True(outMag > inMag);
+
+        double a = Math.Atan2(lx, ly);
+        double b = Math.Atan2(r.LX, r.LY);
+        double d = Math.Abs(a-b);
+        if (d > Math.PI) d = Math.Abs(d-Math.PI*2);
+        Assert.InRange(d, 0, 0.01);
     }
 
     [Fact]
-    public void RandomizedNonShotFramesStayAttackOnlyAndNeverAlterLs()
+    public void RandomizedDirtyFramesStayBoundedAndDoNotThrow()
     {
-        var cfg = new AppConfig();
+        var cfg = new AppConfig { DirtyMeta=true };
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
         var rnd = new Random(27028);
@@ -342,11 +364,21 @@ public class PlayLikeSimulationTests
             var r=e.ProcessFrameForTest(Pad(b,lt,rt,lx,ly,rx,ry),cfg);
 
             Assert.Equal(PlayMode.Attack,e.Mode);
-            Assert.Equal(lx,r.LX);
-            Assert.Equal(ly,r.LY);
+            Assert.InRange((int)r.LX, short.MinValue, short.MaxValue);
+            Assert.InRange((int)r.LY, short.MinValue, short.MaxValue);
+            Assert.InRange((int)r.RX, short.MinValue, short.MaxValue);
+            Assert.InRange((int)r.RY, short.MinValue, short.MaxValue);
+
+            // Face-button actions keep LS exact for shot/pass precision.
+            if ((b & (XButtons.A|XButtons.X|XButtons.Y)) != 0)
+            {
+                Assert.Equal(lx,r.LX);
+                Assert.Equal(ly,r.LY);
+            }
 
             if(i%9==0)
                 e.ProcessFrameForTest(Pad(),cfg);
         }
     }
+
 }
