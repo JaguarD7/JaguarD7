@@ -17,77 +17,120 @@ public class PlayLikeSimulationTests
         => (r.Buttons & (ushort)b) != 0;
 
     private static ControllerEngine Engine(AppConfig? cfg = null)
-        => new(cfg ?? new AppConfig { AutoPress = false, DirtyMeta = false });
+    {
+        cfg ??= new AppConfig();
+        cfg.NormalizeAttackOnly();
+        return new ControllerEngine(cfg);
+    }
 
     [Fact]
-    public void AttackModeIsPermanentAndLtRemainsNative()
+    public void AttackModeIsPermanentAndMovementControlsStayNative()
     {
-        var cfg = new AppConfig { AutoPress=true, SprintJockeyAssist=true, HardTackleAssist=true };
+        var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        var r = e.ProcessFrameForTest(Pad(lt:255, rt:180, lx:-20000, ly:24000), cfg);
+        var r = e.ProcessFrameForTest(Pad(
+            buttons:XButtons.LeftShoulder,
+            lt:211, rt:177, lx:-23000, ly:25000), cfg);
 
         Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.Equal((byte)255, r.LT);
-        Assert.Equal((byte)180, r.RT);
-        Assert.Equal((short)-20000, r.LX);
-        Assert.Equal((short)24000, r.LY);
+        Assert.True(Has(r, XButtons.LeftShoulder));
+        Assert.Equal((byte)211, r.LT);
+        Assert.Equal((byte)177, r.RT);
+        Assert.Equal((short)-23000, r.LX);
+        Assert.Equal((short)25000, r.LY);
     }
 
     [Fact]
-    public void DefenseAutomationCanNeverInjectRb()
-    {
-        var cfg = new AppConfig { AutoPress=true, SprintJockeyAssist=true, HardTackleAssist=true };
-        using var e = Engine(cfg);
-
-        for (int i = 0; i < 20; i++)
-        {
-            var r = e.ProcessFrameForTest(Pad(lt:255, lx:20000), cfg);
-            Assert.False(Has(r, XButtons.RightShoulder));
-            Assert.Equal(PlayMode.Attack, e.Mode);
-        }
-    }
-
-    [Fact]
-    public void NativeLbAfterIntentWindowCannotLaterTurnIntoLbSkill()
+    public void LbIsNeverConsumedEvenOnFirstFrame()
     {
         var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        var start = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.False(Has(start, XButtons.LeftShoulder));
+        var first = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
+        var held = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
 
-        Thread.Sleep(cfg.LbChordWindowMs + 20);
-        var native = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.True(Has(native, XButtons.LeftShoulder));
-
-        var withRs = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, rx:30000), cfg);
-        Assert.True(Has(withRs, XButtons.LeftShoulder));
-        Assert.Equal((short)30000, withRs.RX);
-        Assert.NotEqual("Skilled Bridge", e.LastAction);
+        Assert.True(Has(first, XButtons.LeftShoulder));
+        Assert.True(Has(held, XButtons.LeftShoulder));
     }
 
     [Fact]
-    public void SimultaneousLbRsExecutesSecondLayerWithoutRawLb()
+    public void YRemainsNativeGroundThroughPassWithoutLbOrRbInjection()
     {
         var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        var r = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, rx:30000), cfg);
+        var r = e.ProcessFrameForTest(Pad(XButtons.Y), cfg);
 
-        Assert.Equal("Skilled Bridge", e.LastAction);
+        Assert.True(Has(r, XButtons.Y));
         Assert.False(Has(r, XButtons.LeftShoulder));
-        Assert.Equal((byte)255, r.LT);
+        Assert.False(Has(r, XButtons.RightShoulder));
+    }
+
+    [Fact]
+    public void ADrivenPassPreservesPhysicalLb()
+    {
+        var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
+        using var e = Engine(cfg);
+
+        var r = e.ProcessFrameForTest(Pad(XButtons.A | XButtons.LeftShoulder), cfg);
+
+        Assert.True(Has(r, XButtons.A));
+        Assert.True(Has(r, XButtons.RightShoulder));
+        Assert.True(Has(r, XButtons.LeftShoulder));
+    }
+
+    [Fact]
+    public void RsDirectionsUseFourDifferentDefaultSkills()
+    {
+        var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
+
+        var keys = new[] {"RS_UP","RS_RIGHT","RS_LEFT","RS_DOWN"};
+        var names = keys.Select(k => cfg.SkillMap[k]).ToArray();
+
+        Assert.Equal(4, names.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        foreach (var name in names)
+            Assert.True(SkillLibrary.IsRsOnlySafe(name));
+    }
+
+    [Fact]
+    public void RightAndLeftFlicksResolveToDifferentSkills()
+    {
+        var cfg = new AppConfig { SkillCooldownMs=60, RsRearmMs=50 };
+        cfg.NormalizeAttackOnly();
+        using var e = Engine(cfg);
+
+        e.ProcessFrameForTest(Pad(rx:30000), cfg);
+        var rightAction = e.LastAction;
+        Assert.Contains("RIGHT", rightAction);
+
+        e.ProcessFrameForTest(Pad(), cfg);
+        Thread.Sleep(cfg.RsRearmMs + 15);
+        e.ProcessFrameForTest(Pad(), cfg);
+        Thread.Sleep(70);
+
+        e.ProcessFrameForTest(Pad(rx:-30000), cfg);
+        var leftAction = e.LastAction;
+        Assert.Contains("LEFT", leftAction);
+
+        Assert.NotEqual(rightAction, leftAction);
     }
 
     [Fact]
     public void HeldRsDirectionTriggersOnlyOnceUntilCentered()
     {
-        var cfg = new AppConfig { DirtyMeta=false, SkillCooldownMs=60, RsRearmMs=70 };
+        var cfg = new AppConfig { SkillCooldownMs=60, RsRearmMs=70 };
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
         e.ProcessFrameForTest(Pad(ry:30000), cfg);
-        Assert.Equal("Explosive Stepover", e.LastAction);
+        var firstAction = e.LastAction;
+        Assert.Contains("UP", firstAction);
 
         e.ProcessFrameForTest(Pad(XButtons.A, ry:30000), cfg);
         Assert.Equal("Manual override", e.LastAction);
@@ -109,113 +152,131 @@ public class PlayLikeSimulationTests
         e.ProcessFrameForTest(Pad(), cfg);
         Thread.Sleep(cfg.RsRearmMs + 20);
         e.ProcessFrameForTest(Pad(), cfg);
+        Thread.Sleep(70);
         e.ProcessFrameForTest(Pad(ry:30000), cfg);
-        Assert.Equal("Explosive Stepover", e.LastAction);
+
+        Assert.Contains("UP", e.LastAction);
+        Assert.NotEqual("Manual override", e.LastAction);
     }
 
     [Fact]
-    public void RunningSkillSuppressesPhysicalSprintAndModifiers()
+    public void SkillMacroPreservesLbLtRtAndLs()
     {
         var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        var r = e.ProcessFrameForTest(Pad(rt:255, ry:30000), cfg);
-        Assert.Equal("Explosive Stepover", e.LastAction);
-        Assert.Equal((byte)0, r.RT);
-        Assert.False(Has(r, XButtons.RightShoulder));
+        var r = e.ProcessFrameForTest(Pad(
+            XButtons.LeftShoulder,
+            lt:180, rt:220, lx:16000, ly:-21000, rx:30000), cfg);
+
+        Assert.True(Has(r, XButtons.LeftShoulder));
+        Assert.Equal((byte)180, r.LT);
+        Assert.Equal((byte)220, r.RT);
+        Assert.Equal((short)16000, r.LX);
+        Assert.Equal((short)-21000, r.LY);
     }
 
     [Fact]
     public void ManualFaceButtonCancelsRunningSkill()
     {
         var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
         e.ProcessFrameForTest(Pad(ry:30000), cfg);
-        Assert.Equal("Explosive Stepover", e.LastAction);
+        Assert.Contains("UP", e.LastAction);
 
         var r = e.ProcessFrameForTest(Pad(XButtons.A), cfg);
         Assert.Equal("Manual override", e.LastAction);
         Assert.True(Has(r, XButtons.A));
         Assert.True(Has(r, XButtons.RightShoulder));
-        Assert.False(Has(r, XButtons.LeftShoulder));
     }
 
     [Fact]
     public void QuickBReleaseBecomesCalibratedLowDriven()
     {
-        var cfg = new AppConfig { BTapThresholdMs=180, LowDrivenChargeMs=260, LowDrivenSecondTapGapMs=30, LowDrivenSecondTapMs=45 };
+        var cfg = new AppConfig
+        {
+            BTapThresholdMs=180,
+            LowDrivenChargeMs=260,
+            LowDrivenSecondTapGapMs=30,
+            LowDrivenSecondTapMs=45
+        };
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        var down = e.ProcessFrameForTest(Pad(XButtons.B), cfg);
+        var down = e.ProcessFrameForTest(Pad(XButtons.B, lx:18000, ly:22000), cfg);
         Assert.True(Has(down, XButtons.B));
+        Assert.Equal((short)18000, down.LX);
+        Assert.Equal((short)22000, down.LY);
 
         Thread.Sleep(45);
-        var released = e.ProcessFrameForTest(Pad(), cfg);
+        var released = e.ProcessFrameForTest(Pad(lx:18000, ly:22000), cfg);
         Assert.Equal("Low Driven Shot", e.LastAction);
         Assert.True(Has(released, XButtons.B));
+        Assert.Equal((short)18000, released.LX);
+        Assert.Equal((short)22000, released.LY);
 
         Thread.Sleep(230);
-        var gap = e.ProcessFrameForTest(Pad(), cfg);
+        var gap = e.ProcessFrameForTest(Pad(lx:18000, ly:22000), cfg);
         Assert.False(Has(gap, XButtons.B));
+        Assert.Equal((short)18000, gap.LX);
+        Assert.Equal((short)22000, gap.LY);
     }
 
     [Fact]
-    public void HoldBUsesProgramPowerEvenIfFingerReleasesEarly()
+    public void HoldBUsesProgramPowerButNeverChangesShotDirection()
     {
         var cfg = new AppConfig { BTapThresholdMs=100, BNormalShotCapMs=280 };
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        e.ProcessFrameForTest(Pad(XButtons.B), cfg);
+        e.ProcessFrameForTest(Pad(XButtons.B, lx:-19000, ly:26000), cfg);
         Thread.Sleep(125);
-        var classified = e.ProcessFrameForTest(Pad(XButtons.B), cfg);
+
+        var classified = e.ProcessFrameForTest(Pad(XButtons.B, lx:-19000, ly:26000), cfg);
         Assert.Equal("Normal Strong Shot", e.LastAction);
         Assert.True(Has(classified, XButtons.B));
+        Assert.Equal((short)-19000, classified.LX);
+        Assert.Equal((short)26000, classified.LY);
 
-        var earlyPhysicalRelease = e.ProcessFrameForTest(Pad(), cfg);
-        Assert.True(Has(earlyPhysicalRelease, XButtons.B));
-
-        Thread.Sleep(180);
-        var capped = e.ProcessFrameForTest(Pad(), cfg);
-        Assert.False(Has(capped, XButtons.B));
+        var released = e.ProcessFrameForTest(Pad(lx:-19000, ly:26000), cfg);
+        Assert.True(Has(released, XButtons.B));
+        Assert.Equal((short)-19000, released.LX);
+        Assert.Equal((short)26000, released.LY);
     }
 
     [Fact]
-    public void ReleasingNativeLbWhileRsHeldDoesNotTriggerBaseSkill()
+    public void DirtyMetaNeverRewritesLs()
     {
         var cfg = new AppConfig();
+        cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Thread.Sleep(cfg.LbChordWindowMs + 20);
-        var native = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, rx:30000), cfg);
-        Assert.True(Has(native, XButtons.LeftShoulder));
-        Assert.Equal((short)30000, native.RX);
-
-        var releaseLb = e.ProcessFrameForTest(Pad(rx:30000), cfg);
-        Assert.NotEqual("Ball Roll Spin Right", e.LastAction);
-        Assert.Equal((short)0, releaseLb.RX);
-
-        e.ProcessFrameForTest(Pad(), cfg);
-        Thread.Sleep(cfg.RsRearmMs + 20);
-        e.ProcessFrameForTest(Pad(), cfg);
-        e.ProcessFrameForTest(Pad(rx:30000), cfg);
-        Assert.Equal("Ball Roll Spin Right", e.LastAction);
+        for (int i=0; i<50; i++)
+        {
+            short lx = (short)(-28000 + i * 900);
+            short ly = (short)(25000 - i * 700);
+            var r = e.ProcessFrameForTest(Pad(lx:lx, ly:ly), cfg);
+            Assert.Equal(lx, r.LX);
+            Assert.Equal(ly, r.LY);
+        }
     }
 
     [Fact]
-    public void RandomizedAttackFramesStayAttackOnlyAndDoNotThrow()
+    public void RandomizedAttackFramesStayAttackOnlyAndKeepNativeMovement()
     {
         var cfg = new AppConfig
         {
             AutoPress=true,
             SprintJockeyAssist=true,
             HardTackleAssist=true,
-            DirtyMeta=true,
             BTapThresholdMs=120,
             LowDrivenChargeMs=240,
             BNormalShotCapMs=320
         };
+        cfg.NormalizeAttackOnly();
 
         using var e = Engine(cfg);
         var rnd = new Random(27028);
@@ -242,10 +303,20 @@ public class PlayLikeSimulationTests
             var r = e.ProcessFrameForTest(Pad(b, lt:lt, rt:rt, lx:lx, ly:ly, rx:rx, ry:ry), cfg);
 
             Assert.Equal(PlayMode.Attack, e.Mode);
-            Assert.InRange(r.LX, short.MinValue, short.MaxValue);
-            Assert.InRange(r.LY, short.MinValue, short.MaxValue);
-            Assert.InRange(r.RX, short.MinValue, short.MaxValue);
-            Assert.InRange(r.RY, short.MinValue, short.MaxValue);
+            Assert.Equal(lx, r.LX);
+            Assert.Equal(ly, r.LY);
+            Assert.Equal(lt, r.LT);
+            Assert.Equal(rt, r.RT);
+
+            if ((b & XButtons.LeftShoulder) != 0)
+                Assert.True(Has(r, XButtons.LeftShoulder));
+
+            if ((b & XButtons.Y) != 0)
+            {
+                Assert.True(Has(r, XButtons.Y));
+                if ((b & XButtons.LeftShoulder) == 0)
+                    Assert.False(Has(r, XButtons.LeftShoulder));
+            }
 
             if (i % 7 == 0)
                 e.ProcessFrameForTest(Pad(), cfg);
