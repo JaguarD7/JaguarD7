@@ -162,7 +162,8 @@ public sealed class AppConfig
     public int LowDrivenSecondTapGapMs { get; set; } = 20;
     public int LowDrivenSecondTapMs { get; set; } = 32;
     public int LbChordWindowMs { get; set; } = 55;
-    public int PassPulseMs { get; set; } = 48;
+    public int MoveResponsePercent { get; set; } = 118;
+    public int TurnBoostMs { get; set; } = 55;
     public int DirtyExitBoostMs { get; set; } = 165;
     public int InputLoopHz { get; set; } = 750;
     public bool AutoPress { get; set; } = true;
@@ -205,7 +206,10 @@ public sealed class AppConfig
         if (BNormalShotCapMs == 620 || BNormalShotCapMs == 430) BNormalShotCapMs = 470;
         if (LowDrivenSecondTapGapMs == 30 || LowDrivenSecondTapGapMs == 22) LowDrivenSecondTapGapMs = 20;
         if (LowDrivenSecondTapMs == 45 || LowDrivenSecondTapMs == 34) LowDrivenSecondTapMs = 32;
-        if (PassPulseMs <= 0) PassPulseMs = 48;
+        if (MoveResponsePercent < 100) MoveResponsePercent = 118;
+        MoveResponsePercent = Math.Clamp(MoveResponsePercent, 100, 135);
+        if (TurnBoostMs <= 0) TurnBoostMs = 55;
+        TurnBoostMs = Math.Clamp(TurnBoostMs, 20, 90);
         if (DirtyExitBoostMs <= 0) DirtyExitBoostMs = 165;
         InputLoopHz = Math.Max(750, InputLoopHz);
 
@@ -952,8 +956,6 @@ public sealed class ControllerEngine : IDisposable
     private long _physicalLostSince;
     private long _lastVirtualRetry;
     private long _lastLoopHeartbeat;
-    private long _passPulseUntil;
-    private XButtons _passPulseButton;
     private volatile bool _assistEnabled;
     private System.Threading.Timer? _watchdog;
 
@@ -1305,7 +1307,7 @@ public sealed class ControllerEngine : IDisposable
             _lbDownAt = 0;
         }
 
-        UpdateFacing(p);
+        UpdateFacing(p, cfg);
 
         var r = new VirtualReport
         {
@@ -1354,8 +1356,6 @@ public sealed class ControllerEngine : IDisposable
         _lbRawPassed = false;
         _lbSyntheticTapUntil = 0;
         _macroFromLbLayer = false;
-        _passPulseUntil = 0;
-        _passPulseButton = 0;
         _lastPhysicalRsMagnitude = 0;
         _blockedUntilReleaseMask = 0;
         _blockLtUntilRelease = false;
@@ -1374,7 +1374,7 @@ public sealed class ControllerEngine : IDisposable
         _macro.Cancel();
     }
 
-    private void UpdateFacing(XInputGamepad p)
+    private void UpdateFacing(XInputGamepad p, AppConfig cfg)
     {
         double mag = Math.Sqrt((double)p.ThumbLX*p.ThumbLX + (double)p.ThumbLY*p.ThumbLY);
         if (mag > 6500)
@@ -1384,12 +1384,15 @@ public sealed class ControllerEngine : IDisposable
             if (_lastLsAngleAt != 0)
             {
                 double delta = NormalizeAngle(_facingRad - _lastLsAngle);
-                if (Math.Abs(delta) > 0.95 && MsSince(_lastLsAngleAt) < 120)
+                if (Math.Abs(delta) > 0.85 && MsSince(_lastLsAngleAt) < 120)
                 {
-                    var m = Math.Min(32767.0, Math.Max(24000.0, mag));
+                    // Sharp change of direction: preserve the exact new angle but briefly
+                    // drive the stick magnitude harder so turns register immediately.
+                    var m = Math.Min(32767.0, Math.Max(30000.0, mag));
                     _snapLX = (short)(Math.Sin(_facingRad)*m);
                     _snapLY = (short)(Math.Cos(_facingRad)*m);
-                    _fidgetSnapUntil = now + (long)(Stopwatch.Frequency*0.040);
+                    _fidgetSnapUntil = now +
+                        (long)(Stopwatch.Frequency * (Math.Clamp(cfg.TurnBoostMs, 20, 90) / 1000.0));
                 }
             }
             _lastLsAngle = _facingRad; _lastLsAngleAt = now;
@@ -1497,46 +1500,27 @@ public sealed class ControllerEngine : IDisposable
             LastAction = "Shot cancelled by manual input";
         }
 
-        long passNow = Stopwatch.GetTimestamp();
-        bool aRise = Rising(p.Buttons, _prevButtons, XButtons.A);
-        bool yRise = Rising(p.Buttons, _prevButtons, XButtons.Y);
+        bool aPressed = Btn(p.Buttons, XButtons.A);
+        bool yPressed = Btn(p.Buttons, XButtons.Y);
 
-        if (aRise)
+        if (aPressed)
         {
-            _passPulseButton = XButtons.A;
-            _passPulseUntil = passNow +
-                (long)(Stopwatch.Frequency * (Math.Clamp(cfg.PassPulseMs, 25, 90) / 1000.0));
-            LastAction = "Fast Driven Ground Pass";
-        }
-        else if (yRise)
-        {
-            _passPulseButton = XButtons.Y;
-            _passPulseUntil = passNow +
-                (long)(Stopwatch.Frequency * (Math.Clamp(cfg.PassPulseMs, 25, 90) / 1000.0));
-            LastAction = "Ground Through Pass";
+            // Fast Driven Ground Pass. No pulse/hold extension: duration is exactly
+            // the user's physical A press and LS direction stays untouched.
+            r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.A | XButtons.RightShoulder)) &
+                                 ~(ushort)XButtons.LeftShoulder);
+            if (Rising(p.Buttons, _prevButtons, XButtons.A))
+                LastAction = "Fast Driven Ground Pass";
         }
 
-        if (passNow < _passPulseUntil)
+        if (yPressed)
         {
-            // Keep a quick tap alive just long enough to register cleanly.
-            // LS remains untouched, so pass direction is always the user's.
-            if (_passPulseButton == XButtons.A)
-            {
-                r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.A | XButtons.RightShoulder)) &
-                                     ~(ushort)XButtons.LeftShoulder);
-                r.RT = 0; // brief clean-pass window instead of sprinting through the kick animation
-            }
-            else if (_passPulseButton == XButtons.Y)
-            {
-                r.Buttons = (ushort)((r.Buttons | (ushort)XButtons.Y) &
-                                     ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
-                r.RT = 0;
-            }
-        }
-        else if (_passPulseUntil != 0)
-        {
-            _passPulseUntil = 0;
-            _passPulseButton = 0;
+            // Stronger precision ground through ball: RB + Y on Classic controls.
+            // No synthetic hold; power still follows the user's physical Y duration.
+            r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.Y | XButtons.RightShoulder)) &
+                                 ~(ushort)XButtons.LeftShoulder);
+            if (Rising(p.Buttons, _prevButtons, XButtons.Y))
+                LastAction = "Precision Ground Through Pass";
         }
 
         HandleShotB(p, r, cfg);
@@ -1715,17 +1699,36 @@ public sealed class ControllerEngine : IDisposable
 
     private void ApplyDirtyMeta(XInputGamepad p, VirtualReport r, AppConfig cfg)
     {
-        // Never alter aim/movement while the user is committing a face-button action or shot.
-        if (_bActive || _lowDrivenTail || ConflictRules.ManualFaceOverride(p.Buttons))
+        // Never reshape movement while a shot/pass/skill is being committed.
+        if (_macro.Active || _bActive || _lowDrivenTail || ConflictRules.ManualFaceOverride(p.Buttons))
             return;
 
         long now = Stopwatch.GetTimestamp();
-        if (now < _dirtyBoostUntil)
+
+        // Agility response curve: same LS angle, stronger mid-range magnitude.
+        // This cannot change player stats/animations; it only makes stick response reach
+        // stronger values sooner, which feels lighter and more immediate.
+        double mag = Math.Sqrt((double)p.ThumbLX * p.ThumbLX + (double)p.ThumbLY * p.ThumbLY);
+        if (mag > 4200)
         {
-            double ls = Math.Sqrt((double)p.ThumbLX*p.ThumbLX + (double)p.ThumbLY*p.ThumbLY);
-            if (ls > 9000) r.RT = 255;
+            double angle = Math.Atan2(p.ThumbLX, p.ThumbLY);
+            double norm = Math.Clamp((mag - 4200.0) / (32767.0 - 4200.0), 0.0, 1.0);
+            double response = Math.Clamp(cfg.MoveResponsePercent / 100.0, 1.0, 1.35);
+            double exponent = 1.0 / response;
+            double curved = Math.Pow(norm, exponent);
+            double outMag = 4200.0 + curved * (32767.0 - 4200.0);
+
+            if (now < _fidgetSnapUntil)
+                outMag = Math.Max(outMag, 30000.0);
+
+            outMag = Math.Min(32767.0, outMag);
+            r.LX = (short)Math.Clamp((int)Math.Round(Math.Sin(angle) * outMag), short.MinValue, short.MaxValue);
+            r.LY = (short)Math.Clamp((int)Math.Round(Math.Cos(angle) * outMag), short.MinValue, short.MaxValue);
         }
-        // Never rewrite LS. User movement and shot direction stay 100% physical.
+
+        // Short burst after a completed skill. Never changes LS direction.
+        if (now < _dirtyBoostUntil && mag > 9000)
+            r.RT = 255;
     }
 
     private void WriteReportUnsafe(VirtualReport r)
@@ -2004,8 +2007,8 @@ public sealed class MainForm : Form
             ForeColor=_muted,
             Padding=new Padding(0,8,10,0),
             Text=T(
-                "هذا هو النظام الوحيد في التطبيق.\nشغال: 8 مهارات + الشوت المحسن + Pass Pulse + Explosive Exit + Fast Chaining.\nمطفأ: يتوقف كل تدخل من التطبيق وتبقى اليد طبيعية.",
-                "This is the app's only system.\nON: 8 skills + improved shooting + Pass Pulse + Explosive Exit + Fast Chaining.\nOFF: all app input modifications stop and the controller stays native.")
+                "هذا هو النظام الوحيد في التطبيق.\nشغال: 8 مهارات + Precision Passing + Agility Curve + Turn Boost + الشوت المحسن + Explosive Exit.\nمطفأ: يتوقف كل تدخل من التطبيق وتبقى اليد طبيعية.",
+                "This is the app's only system.\nON: 8 skills + Precision Passing + Agility Curve + Turn Boost + improved shooting + Explosive Exit.\nOFF: all app input modifications stop and the controller stays native.")
         };
         dirtyLayout.Controls.Add(dirtyDesc,0,1);
 
@@ -2051,8 +2054,8 @@ public sealed class MainForm : Form
             TextAlign=ContentAlignment.TopLeft,
             Padding=new Padding(4,10,4,4),
             Text=T(
-                $"B نقرة سريعة  →  Low Driven أرضي سريع ودقيق\nB ضغط مستمر  →  شوت عادي أقوى ومضبوط (حد القوة {_cfg.BNormalShotCapMs}ms)\nاتجاه التسديد  →  LS منك فقط ويثبت وقت الإطلاق\nA  →  Driven Ground Pass + Pass Pulse سريع\nY  →  بينية أرضية + Pass Pulse سريع\nبعد المهارة  →  Explosive Exit تلقائي قصير",
-                $"Quick B tap  →  fast accurate Low Driven ground shot\nHold B  →  stronger calibrated normal shot (power cap {_cfg.BNormalShotCapMs}ms)\nShot direction  →  your LS only, locked at release\nA  →  Driven Ground Pass + Fast Pass Pulse\nY  →  ground through pass + Fast Pass Pulse\nAfter a skill  →  short automatic Explosive Exit")
+                $"B نقرة سريعة  →  Low Driven أرضي سريع ودقيق\nB ضغط مستمر  →  شوت عادي أقوى ومضبوط (حد القوة {_cfg.BNormalShotCapMs}ms)\nاتجاه التسديد  →  LS منك فقط ويثبت وقت الإطلاق\nA  →  Driven Ground Pass سريع بدون تمديد\nY  →  Precision Ground Through (RB+Y) بنفس مدة ضغطتك\nالحركة  →  Agility Curve + Turn Boost بدون Skill Move\nبعد المهارة  →  Explosive Exit تلقائي قصير",
+                $"Quick B tap  →  fast accurate Low Driven ground shot\nHold B  →  stronger calibrated normal shot (power cap {_cfg.BNormalShotCapMs}ms)\nShot direction  →  your LS only, locked at release\nA  →  Driven Ground Pass with no synthetic hold\nY  →  Precision Ground Through (RB+Y), using your physical press duration\nMovement  →  Agility Curve + Turn Boost without a skill move\nAfter a skill  →  short automatic Explosive Exit")
         },0,1);
         shot.Controls.Add(shotLayout);
         root.Controls.Add(shot);
@@ -2184,8 +2187,8 @@ public sealed class MainForm : Form
     private Control BuildSettings()
     {
         var root=Stack();root.Controls.Add(Title(T("الإعدادات الدقيقة","Precision Settings"),T("لا تغيّر التوقيت إلا بعد الاختبار في Practice Arena.","Only tune timing after testing in Practice Arena.")));
-        var p=PanelCard(745);p.Controls.Add(BigLabel(T("التوقيت والإدخال","TIMING & INPUT")));
-        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=14,Padding=new Padding(0,12,0,0)};table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
+        var p=PanelCard(795);p.Controls.Add(BigLabel(T("التوقيت والإدخال","TIMING & INPUT")));
+        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=15,Padding=new Padding(0,12,0,0)};table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
         AddNumeric(table,0,T("XInput Slot (0-3)","XInput Slot (0-3)"),_cfg.ControllerSlot,0,3,v=>_cfg.ControllerSlot=v);
         AddNumeric(table,1,T("RS Trigger Deadzone","RS Trigger Deadzone"),_cfg.RsTriggerDeadzone,10000,30000,v=>_cfg.RsTriggerDeadzone=v);
         AddNumeric(table,2,T("Skill Step (ms)","Skill Step (ms)"),_cfg.SkillStepMs,25,100,v=>_cfg.SkillStepMs=v);
@@ -2197,9 +2200,10 @@ public sealed class MainForm : Form
         AddNumeric(table,8,T("Low Driven 2nd Tap (ms)","Low Driven 2nd Tap (ms)"),_cfg.LowDrivenSecondTapMs,20,100,v=>_cfg.LowDrivenSecondTapMs=v);
         AddNumeric(table,9,T("RS إعادة التسليح (ms)","RS Rearm Center (ms)"),_cfg.RsRearmMs,40,250,v=>_cfg.RsRearmMs=v);
         AddNumeric(table,10,T("نافذة LB + RS (ms)","LB + RS Intent Window (ms)"),_cfg.LbChordWindowMs,40,120,v=>_cfg.LbChordWindowMs=v);
-        AddNumeric(table,11,T("Pass Pulse (ms)","Pass Pulse (ms)"),_cfg.PassPulseMs,25,90,v=>_cfg.PassPulseMs=v);
-        AddNumeric(table,12,T("Explosive Exit (ms)","Explosive Exit (ms)"),_cfg.DirtyExitBoostMs,80,260,v=>_cfg.DirtyExitBoostMs=v);
-        AddNumeric(table,13,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,500,1000,v=>_cfg.InputLoopHz=v);
+        AddNumeric(table,11,T("استجابة الحركة %","Movement Response %"),_cfg.MoveResponsePercent,100,135,v=>_cfg.MoveResponsePercent=v);
+        AddNumeric(table,12,T("Turn Boost (ms)","Turn Boost (ms)"),_cfg.TurnBoostMs,20,90,v=>_cfg.TurnBoostMs=v);
+        AddNumeric(table,13,T("Explosive Exit (ms)","Explosive Exit (ms)"),_cfg.DirtyExitBoostMs,80,260,v=>_cfg.DirtyExitBoostMs=v);
+        AddNumeric(table,14,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,500,1000,v=>_cfg.InputLoopHz=v);
         p.Controls.Add(table);root.Controls.Add(p);
         var buttons=PanelCard(135);
         var reset=new Button{Text=T("استعادة الإعدادات الافتراضية","RESET DEFAULTS"),Dock=DockStyle.Left,Width=220};StyleButton(reset,false);reset.Click+=(_,_)=>{var fresh=new AppConfig{Language=_cfg.Language};CopyConfig(fresh,_cfg);SaveAndRefresh("settings");};buttons.Controls.Add(reset);
@@ -2211,7 +2215,7 @@ public sealed class MainForm : Form
     private void CopyConfig(AppConfig src, AppConfig dst)
     {
         var lang=dst.Language; var fresh=src;
-        dst.ControllerSlot=fresh.ControllerSlot;dst.DirtyMeta=fresh.DirtyMeta;dst.RsTriggerDeadzone=fresh.RsTriggerDeadzone;dst.RsReleaseDeadzone=fresh.RsReleaseDeadzone;dst.RsRearmMs=fresh.RsRearmMs;dst.SkillStepMs=fresh.SkillStepMs;dst.SkillCooldownMs=fresh.SkillCooldownMs;dst.BTapThresholdMs=fresh.BTapThresholdMs;dst.LowDrivenChargeMs=fresh.LowDrivenChargeMs;dst.BNormalShotCapMs=fresh.BNormalShotCapMs;dst.LowDrivenSecondTapGapMs=fresh.LowDrivenSecondTapGapMs;dst.LowDrivenSecondTapMs=fresh.LowDrivenSecondTapMs;dst.LbChordWindowMs=fresh.LbChordWindowMs;dst.PassPulseMs=fresh.PassPulseMs;dst.DirtyExitBoostMs=fresh.DirtyExitBoostMs;dst.InputLoopHz=fresh.InputLoopHz;dst.AutoPress=fresh.AutoPress;dst.PressureStrength=fresh.PressureStrength;dst.SprintJockeyAssist=fresh.SprintJockeyAssist;dst.HardTackleAssist=fresh.HardTackleAssist;dst.SkillMap=new Dictionary<string,string>(fresh.SkillMap);dst.Language=lang;
+        dst.ControllerSlot=fresh.ControllerSlot;dst.DirtyMeta=fresh.DirtyMeta;dst.RsTriggerDeadzone=fresh.RsTriggerDeadzone;dst.RsReleaseDeadzone=fresh.RsReleaseDeadzone;dst.RsRearmMs=fresh.RsRearmMs;dst.SkillStepMs=fresh.SkillStepMs;dst.SkillCooldownMs=fresh.SkillCooldownMs;dst.BTapThresholdMs=fresh.BTapThresholdMs;dst.LowDrivenChargeMs=fresh.LowDrivenChargeMs;dst.BNormalShotCapMs=fresh.BNormalShotCapMs;dst.LowDrivenSecondTapGapMs=fresh.LowDrivenSecondTapGapMs;dst.LowDrivenSecondTapMs=fresh.LowDrivenSecondTapMs;dst.LbChordWindowMs=fresh.LbChordWindowMs;dst.MoveResponsePercent=fresh.MoveResponsePercent;dst.TurnBoostMs=fresh.TurnBoostMs;dst.DirtyExitBoostMs=fresh.DirtyExitBoostMs;dst.InputLoopHz=fresh.InputLoopHz;dst.AutoPress=fresh.AutoPress;dst.PressureStrength=fresh.PressureStrength;dst.SprintJockeyAssist=fresh.SprintJockeyAssist;dst.HardTackleAssist=fresh.HardTackleAssist;dst.SkillMap=new Dictionary<string,string>(fresh.SkillMap);dst.Language=lang;
     }
 
     private void AddNumeric(TableLayoutPanel t,int row,string name,int val,int min,int max,Action<int> set)
