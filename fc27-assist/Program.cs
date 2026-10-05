@@ -165,6 +165,7 @@ public sealed class AppConfig
 
         var defaults = DefaultAttackSkillMap();
         var keys = defaults.Keys.ToArray();
+        SkillMap ??= new Dictionary<string, string>();
 
         foreach (var old in SkillMap.Keys.Where(k => k.StartsWith("LB_RS_", StringComparison.OrdinalIgnoreCase)).ToArray())
             SkillMap.Remove(old);
@@ -1337,7 +1338,8 @@ public sealed class ControllerEngine : IDisposable
 
         if (Btn(p.Buttons, XButtons.A))
         {
-            r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.A|XButtons.RightShoulder)) & ~(ushort)XButtons.LeftShoulder);
+            // Driven ground pass while preserving every physical modifier, including LB.
+            r.Buttons = (ushort)(r.Buttons | (ushort)(XButtons.A | XButtons.RightShoulder));
         }
 
         HandleShotB(p, r, cfg);
