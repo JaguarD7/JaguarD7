@@ -839,6 +839,7 @@ public sealed class ControllerEngine : IDisposable
 
     public PlayMode Mode { get; private set; } = PlayMode.Attack;
     public bool Connected => _controllerConnected;
+    public int PhysicalSlot => _physicalSlot;
     public bool ViGEmReady => _vigemReady;
     public string LastAction { get; private set; } = "Ready";
     public XInputGamepad LastPhysical { get; private set; }
@@ -1121,38 +1122,22 @@ public sealed class ControllerEngine : IDisposable
         AppConfig cfg = cfgOverride ?? _cfg;
         LastPhysical = p;
 
-        bool ltModePressed = p.LeftTrigger >= 28;
-
-        // Mode changes are edge-triggered: one transition only.
-        if (ltModePressed && !_prevLtModePressed && Mode != PlayMode.Defense)
-        {
-            _blockedUntilReleaseMask |= (ushort)(p.Buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y | XButtons.LeftShoulder | XButtons.RightShoulder));
-            var currentRsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
-            _blockDefenseRsUntilCenter = currentRsMag >= cfg.RsReleaseDeadzone;
-            SetMode(PlayMode.Defense);
-        }
-
+        // ATTACK-ONLY MODE:
+        // LT/RT/LS remain native. There is no defense mode transition and no
+        // automatic defensive input. This deliberately removes an entire class
+        // of state conflicts between movement, player switching and skill macros.
         if (Rising(p.Buttons, _prevButtons, XButtons.LeftShoulder))
         {
             _lbDownAt = Stopwatch.GetTimestamp();
             _lbChordConsumed = false;
             _lbRawPassed = false;
-            _lbModeTransitionConsumed = Mode != PlayMode.Attack;
-            if (_lbModeTransitionConsumed)
-            {
-                _blockedUntilReleaseMask |= (ushort)(p.Buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y | XButtons.RightShoulder));
-                _blockLtUntilRelease = p.LeftTrigger >= 28;
-                bool rsWasAlreadyHeld = _lastPhysicalRsMagnitude >= cfg.RsReleaseDeadzone;
-                SetMode(PlayMode.Attack);
-                _rsLatched = rsWasAlreadyHeld;
-            }
+            _lbModeTransitionConsumed = false;
         }
 
         if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
         {
             var currentRsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
-            if ((_lbChordConsumed || _lbModeTransitionConsumed || _lbRawPassed) &&
-                currentRsMag >= cfg.RsReleaseDeadzone)
+            if ((_lbChordConsumed || _lbRawPassed) && currentRsMag >= cfg.RsReleaseDeadzone)
                 _rsLatched = true;
 
             _lbChordConsumed = false;
@@ -1160,39 +1145,20 @@ public sealed class ControllerEngine : IDisposable
             _lbRawPassed = false;
         }
 
-        _prevLtModePressed = ltModePressed;
+        UpdateFacing(p);
 
-        // Inputs carried from the previous mode stay inert until physically released.
-        _blockedUntilReleaseMask = (ushort)(_blockedUntilReleaseMask & p.Buttons);
-        if (_blockLtUntilRelease && p.LeftTrigger < 20)
-            _blockLtUntilRelease = false;
-
-        var effectiveP = p;
-        effectiveP.Buttons = (ushort)(p.Buttons & ~_blockedUntilReleaseMask);
-        if (_blockLtUntilRelease)
-            effectiveP.LeftTrigger = 0;
-
-        if (_blockDefenseRsUntilCenter)
-        {
-            var qMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
-            if (qMag < cfg.RsReleaseDeadzone)
-                _blockDefenseRsUntilCenter = false;
-            else
-            {
-                effectiveP.ThumbRX = 0;
-                effectiveP.ThumbRY = 0;
-            }
-        }
-
-        UpdateFacing(effectiveP);
         var r = new VirtualReport
         {
-            Buttons=effectiveP.Buttons, LT=effectiveP.LeftTrigger, RT=effectiveP.RightTrigger,
-            LX=effectiveP.ThumbLX, LY=effectiveP.ThumbLY, RX=effectiveP.ThumbRX, RY=effectiveP.ThumbRY
+            Buttons = p.Buttons,
+            LT = p.LeftTrigger,
+            RT = p.RightTrigger,
+            LX = p.ThumbLX,
+            LY = p.ThumbLY,
+            RX = p.ThumbRX,
+            RY = p.ThumbRY
         };
 
-        if (Mode == PlayMode.Attack) ApplyAttack(effectiveP, r, cfg);
-        else ApplyDefense(effectiveP, r, cfg);
+        ApplyAttack(p, r, cfg);
 
         if (_macro.Active)
         {
@@ -1202,8 +1168,8 @@ public sealed class ControllerEngine : IDisposable
             _macro.Apply(r);
         }
 
-        if (cfg.DirtyMeta && Mode == PlayMode.Attack)
-            ApplyDirtyMeta(effectiveP, r, cfg);
+        if (cfg.DirtyMeta)
+            ApplyDirtyMeta(p, r, cfg);
 
         _prevButtons = p.Buttons;
         _lastPhysicalRsMagnitude = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
@@ -1490,55 +1456,6 @@ public sealed class ControllerEngine : IDisposable
         }
     }
 
-    private void ApplyDefense(XInputGamepad p, VirtualReport r, AppConfig cfg)
-    {
-        _macro.Cancel();
-        r.RX = p.ThumbRX; r.RY = p.ThumbRY;
-
-        var now = Stopwatch.GetTimestamp();
-        var rsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
-        bool rsSwitchIntent = rsMag > 14500 && _prevRsMagnitude <= 14500;
-        _prevRsMagnitude = rsMag;
-
-        bool tackleOrKeeper = Btn(p.Buttons, XButtons.A) || Btn(p.Buttons, XButtons.B) || Btn(p.Buttons, XButtons.X) || Btn(p.Buttons, XButtons.Y);
-        bool conflictBlock = ConflictRules.BlockAutoPress(p.Buttons, rsSwitchIntent);
-        if (conflictBlock)
-        {
-            // Never combine automatic RB pressure with a manual tackle/slide/keeper rush/player switch.
-            _defensePressBlockUntil = now + (long)(Stopwatch.Frequency * (tackleOrKeeper ? 0.28 : 0.16));
-            _pressOn = false;
-            _pressPhaseStart = now;
-        }
-
-        bool pressGuardActive = now < _defensePressBlockUntil;
-
-        if (cfg.AutoPress && !pressGuardActive && !Btn(p.Buttons, XButtons.RightShoulder))
-        {
-            int onMs = cfg.PressureStrength == "Aggressive" ? 430 : cfg.PressureStrength == "Low" ? 220 : 330;
-            int offMs = cfg.PressureStrength == "Aggressive" ? 80 : cfg.PressureStrength == "Low" ? 220 : 130;
-            if (_pressPhaseStart == 0) _pressPhaseStart = Stopwatch.GetTimestamp();
-            var e = MsSince(_pressPhaseStart);
-            if (_pressOn && e >= onMs) { _pressOn=false; _pressPhaseStart=Stopwatch.GetTimestamp(); }
-            else if (!_pressOn && e >= offMs) { _pressOn=true; _pressPhaseStart=Stopwatch.GetTimestamp(); }
-            if (_pressOn) r.Buttons |= (ushort)XButtons.RightShoulder;
-        }
-        else { _pressPhaseStart=Stopwatch.GetTimestamp(); _pressOn=false; }
-
-        if (cfg.SprintJockeyAssist && p.LeftTrigger > 40)
-        {
-            double ls = Math.Sqrt((double)p.ThumbLX*p.ThumbLX + (double)p.ThumbLY*p.ThumbLY) / 32767.0;
-            if (ls > 0.72) r.RT = 255;
-        }
-
-        if (cfg.HardTackleAssist)
-        {
-            if ((Btn(p.Buttons,XButtons.B) || Btn(p.Buttons,XButtons.X)) && !Btn(_prevButtons,XButtons.B) && !Btn(_prevButtons,XButtons.X))
-                _bStart = Stopwatch.GetTimestamp();
-            if ((Btn(p.Buttons,XButtons.B) || Btn(p.Buttons,XButtons.X)) && MsSince(_bStart) > 170)
-                r.Buttons |= (ushort)XButtons.RightShoulder;
-        }
-    }
-
     private void ApplyDirtyMeta(XInputGamepad p, VirtualReport r, AppConfig cfg)
     {
         // Never alter aim/movement while the user is committing a face-button action or shot.
@@ -1651,6 +1568,9 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _cfg = AppConfig.Load();
+        _cfg.AutoPress = false;
+        _cfg.SprintJockeyAssist = false;
+        _cfg.HardTackleAssist = false;
         Text = "FC27 Assist";
         MinimumSize = new Size(1060, 700);
         Size = new Size(1240, 780);
@@ -1766,12 +1686,11 @@ public sealed class MainForm : Form
 
         AddNav(side,"dashboard","◈  " + T("الرئيسية","Dashboard"));
         AddNav(side,"attack","⚡  " + T("الهجوم","Attack"));
-        AddNav(side,"defense","◆  " + T("الدفاع","Defense"));
         AddNav(side,"skills","✦  " + T("مكتبة المهارات","Skill Library"));
         AddNav(side,"controller","◎  " + T("اختبار اليد","Controller Test"));
         AddNav(side,"settings","⚙  " + T("الإعدادات","Settings"));
 
-        var foot = new Label { Dock=DockStyle.Bottom, Height=60, Text=T("LB = هجوم   •   LT = دفاع","LB = Attack   •   LT = Defense"), ForeColor=_muted, TextAlign=ContentAlignment.MiddleLeft };
+        var foot = new Label { Dock=DockStyle.Bottom, Height=60, Text=T("RS = مهارات   •   LT/RT/LS = طبيعي","RS = Skills   •   LT/RT/LS = Native"), ForeColor=_muted, TextAlign=ContentAlignment.MiddleLeft };
         side.Controls.Add(foot);
 
         var top = new Panel { Dock=DockStyle.Top, Height=74, BackColor=_bg, Padding=new Padding(24,14,24,10) };
@@ -1804,7 +1723,7 @@ public sealed class MainForm : Form
         foreach(var kv in _nav){ kv.Value.ForeColor = kv.Key==page ? _accent : _muted; kv.Value.BackColor = kv.Key==page ? Color.FromArgb(24,34,46) : Color.Transparent; }
         Control p = page switch
         {
-            "attack" => BuildAttack(), "defense" => BuildDefense(), "skills" => BuildSkills(),
+            "attack" => BuildAttack(), "skills" => BuildSkills(),
             "controller" => BuildController(), "settings" => BuildSettings(), _ => BuildDashboard()
         };
         p.Dock=DockStyle.Top; _content.Controls.Add(p); _content.ResumeLayout();
@@ -1812,9 +1731,9 @@ public sealed class MainForm : Form
 
     private Control BuildDashboard()
     {
-        var root=Stack(); root.Controls.Add(Title(T("FC27 Assist — لوحة التحكم","FC27 Assist — Control Center"),T("اختصارات سريعة، وضع هجوم/دفاع، وDirty Meta بدون تحليل شاشة.","Low-latency shortcuts, Attack/Defense modes, and Dirty Meta without screen analysis.")));
+        var root=Stack(); root.Controls.Add(Title(T("FC27 Assist — لوحة التحكم","FC27 Assist — Control Center"),T("وضع هجوم فقط لتقليل التعارضات والحفاظ على حركة اليد الطبيعية.","Attack-only mode to minimize conflicts while keeping native movement controls.")));
         var row=Row(3,190);
-        row.Controls.Add(Card(T("الوضع الحالي","CURRENT MODE"), _engine.Mode==PlayMode.Attack?T("هجوم ⚡","ATTACK ⚡"):T("دفاع ◆","DEFENSE ◆"), T("LB للهجوم • LT للدفاع","LB Attack • LT Defense")));
+        row.Controls.Add(Card(T("الوضع الحالي","CURRENT MODE"), T("هجوم فقط ⚡","ATTACK ONLY ⚡"), T("LT / RT / LS تعمل طبيعي","LT / RT / LS stay native")));
         row.Controls.Add(Card(T("Dirty Meta","DIRTY META"), _cfg.DirtyMeta?T("مفعّل","ENABLED"):T("متوقف","OFF"), T("مفتاح واحد لكل إضافات الميتا","One switch for the full meta layer")));
         row.Controls.Add(Card(T("محرك اليد","CONTROLLER ENGINE"), _singleController.Ready ? T("يد واحدة","ONE CONTROLLER") : T("إعداد مطلوب","SETUP REQUIRED"), _singleController.Message));
         root.Controls.Add(row);
@@ -1825,14 +1744,14 @@ public sealed class MainForm : Form
         root.Controls.Add(dirty);
 
         var info=PanelCard(170); info.Controls.Add(BigLabel(T("منع التعارض","CONFLICT CONTROL")));
-        info.Controls.Add(new Label{Text=T("LT يحول فورًا لوضع الدفاع ويرجع RS لتبديل اللاعب. LB يحول للهجوم ويرجع اختصارات المهارات. RT وLS يظلون طبيعيين دائمًا.","LT immediately activates Defense and restores RS player switching. LB activates Attack and restores skill shortcuts. RT and LS remain native at all times."),AutoSize=false,Height=72,Dock=DockStyle.Fill,ForeColor=_muted,Padding=new Padding(0,12,0,0)});
+        info.Controls.Add(new Label{Text=T("لا يوجد وضع دفاع. LT وRT وLS تمر مباشرة للعبة. RS للمهارات وLB + RS للطبقة الثانية فقط.","Defense mode is disabled. LT, RT and LS pass directly to the game. RS handles skills and LB + RS is the second skill layer."),AutoSize=false,Height=72,Dock=DockStyle.Fill,ForeColor=_muted,Padding=new Padding(0,12,0,0)});
         root.Controls.Add(info);
         return root;
     }
 
     private Control BuildAttack()
     {
-        var root=Stack(); root.Controls.Add(Title(T("الهجوم","Attack Mode"),T("اضغط LB للدخول. القير اليمين يصبح لوحة مهارات سريعة.","Press LB to enter. The right stick becomes a fast skill pad.")));
+        var root=Stack(); root.Controls.Add(Title(T("الهجوم","Attack Only"),T("الهجوم دائم. القير اليمين للمهارات وLB + RS للطبقة الثانية.","Attack is always active. RS triggers skills and LB + RS uses the second layer.")));
         var grid=Row(2,360); grid.Controls.Add(BuildMappingCard(false)); grid.Controls.Add(BuildMappingCard(true)); root.Controls.Add(grid);
         var shot=PanelCard(235); shot.Controls.Add(BigLabel(T("التسديد والتمرير","SHOOTING & PASSING")));
         var txt=new Label{Dock=DockStyle.Fill,ForeColor=_muted,Text=T(
@@ -1857,21 +1776,6 @@ public sealed class MainForm : Form
             table.Controls.Add(cb,1,i);
         }
         p.Controls.Add(table); return p;
-    }
-
-    private Control BuildDefense()
-    {
-        var root=Stack(); root.Controls.Add(Title(T("الدفاع","Defense Mode"),T("اضغط LT: مساعدات دفاعية بدون Auto Tackle أو تحريك اللاعب بدالك.","Press LT: defensive assistance without auto-tackling or moving your defender for you.")));
-        var p=PanelCard(350); p.Controls.Add(BigLabel(T("مساعد الدفاع","DEFENSE ASSIST")));
-        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=5,Padding=new Padding(0,12,0,0)}; table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,65)); table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,35));
-        AddToggleRow(table,0,T("ضغط اللاعب الثاني التلقائي","Smart Second-Man Press"),_cfg.AutoPress,v=>{_cfg.AutoPress=v;SaveCfg();});
-        var pc=new ComboBox{Dock=DockStyle.Fill,DropDownStyle=ComboBoxStyle.DropDownList,BackColor=_panel2,ForeColor=_text,FlatStyle=FlatStyle.Flat}; pc.Items.AddRange(new object[]{"Low","Balanced","Aggressive"});pc.SelectedItem=_cfg.PressureStrength;pc.SelectedIndexChanged+=(_,_)=>{_cfg.PressureStrength=pc.SelectedItem?.ToString()??"Balanced";SaveCfg();}; AddRow(table,1,T("قوة الضغط","Pressure strength"),pc);
-        AddToggleRow(table,2,T("Sprint Jockey Assist","Sprint Jockey Assist"),_cfg.SprintJockeyAssist,v=>{_cfg.SprintJockeyAssist=v;SaveCfg();});
-        AddToggleRow(table,3,T("Hard Tackle عند الضغط المطول","Hard Tackle on hold"),_cfg.HardTackleAssist,v=>{_cfg.HardTackleAssist=v;SaveCfg();});
-        AddRow(table,4,T("RS في الدفاع","RS in Defense"),new Label{Text=T("تبديل لاعب طبيعي 100%","100% native player switching"),Dock=DockStyle.Fill,ForeColor=_accent,TextAlign=ContentAlignment.MiddleLeft});
-        p.Controls.Add(table); root.Controls.Add(p);
-        var note=PanelCard(150);note.Controls.Add(BigLabel(T("الأولوية لك","YOU KEEP CONTROL")));note.Controls.Add(new Label{Dock=DockStyle.Fill,Text=T("البرنامج لا يسوي Tackle من نفسه. LS وRT والحركة والتدخل النهائي كلها بيدك. الضغط فقط يساعد لاعبًا ثانيًا.","The app never tackles on its own. LS, RT, movement and the final tackle remain yours; press assistance only uses the second defender."),ForeColor=_muted,Padding=new Padding(0,12,0,0)});root.Controls.Add(note);
-        return root;
     }
 
     private Control BuildSkills()
@@ -1960,11 +1864,20 @@ public sealed class MainForm : Form
 
     private bool ProbePhysicalController(out int slot, out XInputGamepad pad)
     {
-        if (XInputNative.TryFindFirst(out slot, out var state))
+        slot = _engine.PhysicalSlot;
+        if (slot >= 0 && XInputNative.TryGetState(slot, out var lockedState))
+        {
+            pad = lockedState.Gamepad;
+            return true;
+        }
+
+        // Only perform an all-slot scan before the engine/ViGEm pipeline is active.
+        if (!_engine.ViGEmReady && XInputNative.TryFindFirst(out slot, out var state))
         {
             pad = state.Gamepad;
             return true;
         }
+
         pad = default;
         return false;
     }
@@ -1972,7 +1885,7 @@ public sealed class MainForm : Form
     private void UpdateStatus()
     {
         if (IsDisposed) return;
-        _modeBadge.Text=_engine.Mode==PlayMode.Attack?T("⚡ وضع الهجوم","⚡ ATTACK MODE"):T("◆ وضع الدفاع","◆ DEFENSE MODE");_modeBadge.ForeColor=_engine.Mode==PlayMode.Attack?_accent:_cyan;
+        _modeBadge.Text=T("⚡ هجوم فقط","⚡ ATTACK ONLY");_modeBadge.ForeColor=_accent;
         bool physicalOk = ProbePhysicalController(out var physicalSlot, out var physicalPad);
         _controllerBadge.Text=physicalOk?T($"● اليد متصلة S{physicalSlot}","● Physical OK S"+physicalSlot):T("○ اليد غير متصلة","○ Physical Lost");
         _controllerBadge.ForeColor=physicalOk?_accent:Color.OrangeRed;
@@ -1994,5 +1907,5 @@ public sealed class MainForm : Form
     private void SaveCfg(){_cfg.Save();_engine.UpdateConfig(_cfg);}
     private void SaveAndRefresh(string page){SaveCfg();ShowPage(page);UpdateStatus();}
     private void ToggleLanguage(){_cfg.Language=Ar?"en":"ar";_cfg.Save();BuildLanguageRefresh();}
-    private void BuildLanguageRefresh(){_langBtn.Text=Ar?"EN":"عربي";foreach(var kv in _nav){kv.Value.Text=kv.Key switch{"dashboard"=>"◈  "+T("الرئيسية","Dashboard"),"attack"=>"⚡  "+T("الهجوم","Attack"),"defense"=>"◆  "+T("الدفاع","Defense"),"skills"=>"✦  "+T("مكتبة المهارات","Skill Library"),"controller"=>"◎  "+T("اختبار اليد","Controller Test"),_=>"⚙  "+T("الإعدادات","Settings")};}ShowPage(_page);}
+    private void BuildLanguageRefresh(){_langBtn.Text=Ar?"EN":"عربي";foreach(var kv in _nav){kv.Value.Text=kv.Key switch{"dashboard"=>"◈  "+T("الرئيسية","Dashboard"),"attack"=>"⚡  "+T("الهجوم","Attack"),"skills"=>"✦  "+T("مكتبة المهارات","Skill Library"),"controller"=>"◎  "+T("اختبار اليد","Controller Test"),_=>"⚙  "+T("الإعدادات","Settings")};}ShowPage(_page);}
 }
