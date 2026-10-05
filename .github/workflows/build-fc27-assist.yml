@@ -1,0 +1,79 @@
+name: Build FC27 Controller Assist
+
+on:
+  push:
+    branches:
+      - fc27-controller-assist
+    paths:
+      - 'FC27-Controller-Assist/**'
+      - '.github/workflows/build-fc27-assist.yml'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      VGAMEPAD_SKIP_VIGEMBUS_INSTALL: 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Reconstruct and verify source
+        shell: pwsh
+        run: |
+          $parts = @(
+            'FC27-Controller-Assist/source.part00',
+            'FC27-Controller-Assist/source.part01',
+            'FC27-Controller-Assist/source.part02',
+            'FC27-Controller-Assist/source.part03a',
+            'FC27-Controller-Assist/source.part03b',
+            'FC27-Controller-Assist/source.part04',
+            'FC27-Controller-Assist/source.part05'
+          )
+          $b64 = ($parts | ForEach-Object { Get-Content -Raw $_ }) -join ''
+          if ($b64.Length -ne 23608) { throw "Source bundle length mismatch: $($b64.Length)" }
+          [IO.File]::WriteAllBytes('fc27-source.zip', [Convert]::FromBase64String($b64))
+          $hash = (Get-FileHash 'fc27-source.zip' -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne '971bb5645c4f81c7550aa264489b0875fb7923f6e125a8a14ac09835752b92a7') {
+            throw "Source SHA256 mismatch: $hash"
+          }
+          New-Item -ItemType Directory -Force -Path src | Out-Null
+          Expand-Archive -Path 'fc27-source.zip' -DestinationPath src -Force
+
+      - name: Install dependencies
+        shell: pwsh
+        working-directory: src
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Compile and engine tests
+        shell: pwsh
+        working-directory: src
+        run: |
+          python -m py_compile app.py core_engine.py xinput_backend.py virtual_backend.py test_engine.py
+          python test_engine.py
+
+      - name: Build EXE
+        shell: pwsh
+        working-directory: src
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name FC27-Controller-Assist --collect-all customtkinter --collect-all vgamepad app.py
+          if (-not (Test-Path 'dist/FC27-Controller-Assist.exe')) { throw 'EXE was not created' }
+          Get-FileHash 'dist/FC27-Controller-Assist.exe' -Algorithm SHA256
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: FC27-Controller-Assist-Windows
+          path: src/dist/FC27-Controller-Assist.exe
+          if-no-files-found: error
+          retention-days: 14
