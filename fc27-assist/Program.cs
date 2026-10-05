@@ -1512,6 +1512,7 @@ public sealed class ControllerEngine : IDisposable
     {
         bool b = Btn(p.Buttons, XButtons.B);
         bool bRise = Rising(p.Buttons, _prevButtons, XButtons.B);
+        bool bFall = !b && Btn(_prevButtons, XButtons.B);
 
         if (bRise)
         {
@@ -1575,7 +1576,8 @@ public sealed class ControllerEngine : IDisposable
                 {
                     // If the user releases before the calibrated power cap, keep only the
                     // B charge alive. The shot direction stays locked to their last LS aim.
-                    TrackShotAim(p, false);
+                    if (bFall)
+                        TrackShotAim(p, false);
                     ApplyLatchedShotAim(r);
                     if (held < cfg.BNormalShotCapMs && !_bCapped)
                     {
