@@ -167,10 +167,13 @@ public class PrecisionTests
         var fr = MacroRunner.RotatedVector(Dir.ForwardRight, 0);
         var r = MacroRunner.RotatedVector(Dir.Right, 0);
 
+        // XInput contract: +X is right, -X is left, +Y is up.
         Assert.True(f.y > 25000 && Math.Abs(f.x) < 1000);
-        Assert.True(Math.Abs(fr.x) > 18000 && fr.y > 18000);
-        Assert.True(Math.Abs(r.x) > 25000 && Math.Abs(r.y) < 1000);
-        Assert.Equal(Math.Sign(r.x), Math.Sign(fr.x));
+        Assert.True(fr.x > 18000 && fr.y > 18000);
+        Assert.True(r.x > 25000 && Math.Abs(r.y) < 1000);
+
+        var l = MacroRunner.RotatedVector(Dir.Left, 0);
+        Assert.True(l.x < -25000 && Math.Abs(l.y) < 1000);
     }
 
     [Fact]
@@ -204,6 +207,21 @@ public class PrecisionTests
         Assert.Equal(Dir.Forward, steps[0].Rs);
         Assert.Equal(Dir.ForwardRight, steps[1].Rs);
         Assert.Equal(Dir.Right, steps[2].Rs);
+    }
+
+
+    [Fact]
+    public void RelativeDirectionsRotateCorrectlyWithPlayerFacing()
+    {
+        // Facing right: local Forward = screen/right (+X), local Right = screen/back (-Y).
+        var facingRight = Math.PI / 2;
+        var forward = MacroRunner.RotatedVector(Dir.Forward, facingRight);
+        var localRight = MacroRunner.RotatedVector(Dir.Right, facingRight);
+        var localLeft = MacroRunner.RotatedVector(Dir.Left, facingRight);
+
+        Assert.True(forward.x > 25000 && Math.Abs(forward.y) < 1000);
+        Assert.True(localRight.y < -25000 && Math.Abs(localRight.x) < 1000);
+        Assert.True(localLeft.y > 25000 && Math.Abs(localLeft.x) < 1000);
     }
 
 }
