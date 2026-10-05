@@ -929,16 +929,19 @@ public sealed class MainForm : Form
     private Control BuildSettings()
     {
         var root=Stack();root.Controls.Add(Title(T("الإعدادات الدقيقة","Precision Settings"),T("لا تغيّر التوقيت إلا بعد الاختبار في Practice Arena.","Only tune timing after testing in Practice Arena.")));
-        var p=PanelCard(470);p.Controls.Add(BigLabel(T("التوقيت والإدخال","TIMING & INPUT")));
-        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=8,Padding=new Padding(0,12,0,0)};table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
+        var p=PanelCard(585);p.Controls.Add(BigLabel(T("التوقيت والإدخال","TIMING & INPUT")));
+        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=11,Padding=new Padding(0,12,0,0)};table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
         AddNumeric(table,0,T("XInput Slot (0-3)","XInput Slot (0-3)"),_cfg.ControllerSlot,0,3,v=>_cfg.ControllerSlot=v);
         AddNumeric(table,1,T("RS Trigger Deadzone","RS Trigger Deadzone"),_cfg.RsTriggerDeadzone,10000,30000,v=>_cfg.RsTriggerDeadzone=v);
         AddNumeric(table,2,T("Skill Step (ms)","Skill Step (ms)"),_cfg.SkillStepMs,25,100,v=>_cfg.SkillStepMs=v);
         AddNumeric(table,3,T("Skill Cooldown (ms)","Skill Cooldown (ms)"),_cfg.SkillCooldownMs,60,300,v=>_cfg.SkillCooldownMs=v);
         AddNumeric(table,4,T("B Tap Threshold (ms)","B Tap Threshold (ms)"),_cfg.BTapThresholdMs,90,300,v=>_cfg.BTapThresholdMs=v);
-        AddNumeric(table,5,T("Normal Shot Power Cap (ms)","Normal Shot Power Cap (ms)"),_cfg.BNormalShotCapMs,300,1000,v=>_cfg.BNormalShotCapMs=v);
-        AddNumeric(table,6,T("Low Driven Gap (ms)","Low Driven Gap (ms)"),_cfg.LowDrivenSecondTapGapMs,10,100,v=>_cfg.LowDrivenSecondTapGapMs=v);
-        AddNumeric(table,7,T("Low Driven 2nd Tap (ms)","Low Driven 2nd Tap (ms)"),_cfg.LowDrivenSecondTapMs,20,100,v=>_cfg.LowDrivenSecondTapMs=v);
+        AddNumeric(table,5,T("Low Driven Charge (ms)","Low Driven Charge (ms)"),_cfg.LowDrivenChargeMs,220,700,v=>_cfg.LowDrivenChargeMs=v);
+        AddNumeric(table,6,T("Normal Shot Power Cap (ms)","Normal Shot Power Cap (ms)"),_cfg.BNormalShotCapMs,300,1000,v=>_cfg.BNormalShotCapMs=v);
+        AddNumeric(table,7,T("Low Driven Gap (ms)","Low Driven Gap (ms)"),_cfg.LowDrivenSecondTapGapMs,10,100,v=>_cfg.LowDrivenSecondTapGapMs=v);
+        AddNumeric(table,8,T("Low Driven 2nd Tap (ms)","Low Driven 2nd Tap (ms)"),_cfg.LowDrivenSecondTapMs,20,100,v=>_cfg.LowDrivenSecondTapMs=v);
+        AddNumeric(table,9,T("LB Skill Chord Window (ms)","LB Skill Chord Window (ms)"),_cfg.LbChordWindowMs,30,160,v=>_cfg.LbChordWindowMs=v);
+        AddNumeric(table,10,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,250,1000,v=>_cfg.InputLoopHz=v);
         p.Controls.Add(table);root.Controls.Add(p);
         var buttons=PanelCard(135);var reset=new Button{Text=T("استعادة الإعدادات الافتراضية","RESET DEFAULTS"),Dock=DockStyle.Left,Width=220};StyleButton(reset,false);reset.Click+=(_,_)=>{var fresh=new AppConfig{Language=_cfg.Language};CopyConfig(fresh,_cfg);SaveAndRefresh("settings");};buttons.Controls.Add(reset);var save=new Button{Text=T("حفظ","SAVE"),Dock=DockStyle.Right,Width=180};StyleButton(save,true);save.Click+=(_,_)=>SaveCfg();buttons.Controls.Add(save);root.Controls.Add(buttons);return root;
     }
@@ -946,7 +949,7 @@ public sealed class MainForm : Form
     private void CopyConfig(AppConfig src, AppConfig dst)
     {
         var lang=dst.Language; var fresh=src;
-        dst.ControllerSlot=fresh.ControllerSlot;dst.DirtyMeta=fresh.DirtyMeta;dst.RsTriggerDeadzone=fresh.RsTriggerDeadzone;dst.RsReleaseDeadzone=fresh.RsReleaseDeadzone;dst.SkillStepMs=fresh.SkillStepMs;dst.SkillCooldownMs=fresh.SkillCooldownMs;dst.BTapThresholdMs=fresh.BTapThresholdMs;dst.BNormalShotCapMs=fresh.BNormalShotCapMs;dst.LowDrivenSecondTapGapMs=fresh.LowDrivenSecondTapGapMs;dst.LowDrivenSecondTapMs=fresh.LowDrivenSecondTapMs;dst.AutoPress=fresh.AutoPress;dst.PressureStrength=fresh.PressureStrength;dst.SprintJockeyAssist=fresh.SprintJockeyAssist;dst.HardTackleAssist=fresh.HardTackleAssist;dst.SkillMap=new Dictionary<string,string>(fresh.SkillMap);dst.Language=lang;
+        dst.ControllerSlot=fresh.ControllerSlot;dst.DirtyMeta=fresh.DirtyMeta;dst.RsTriggerDeadzone=fresh.RsTriggerDeadzone;dst.RsReleaseDeadzone=fresh.RsReleaseDeadzone;dst.SkillStepMs=fresh.SkillStepMs;dst.SkillCooldownMs=fresh.SkillCooldownMs;dst.BTapThresholdMs=fresh.BTapThresholdMs;dst.LowDrivenChargeMs=fresh.LowDrivenChargeMs;dst.BNormalShotCapMs=fresh.BNormalShotCapMs;dst.LowDrivenSecondTapGapMs=fresh.LowDrivenSecondTapGapMs;dst.LowDrivenSecondTapMs=fresh.LowDrivenSecondTapMs;dst.LbChordWindowMs=fresh.LbChordWindowMs;dst.InputLoopHz=fresh.InputLoopHz;dst.AutoPress=fresh.AutoPress;dst.PressureStrength=fresh.PressureStrength;dst.SprintJockeyAssist=fresh.SprintJockeyAssist;dst.HardTackleAssist=fresh.HardTackleAssist;dst.SkillMap=new Dictionary<string,string>(fresh.SkillMap);dst.Language=lang;
     }
 
     private void AddNumeric(TableLayoutPanel t,int row,string name,int val,int min,int max,Action<int> set)
