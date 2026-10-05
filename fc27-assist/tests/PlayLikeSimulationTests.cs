@@ -24,6 +24,34 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
+    public void MasterButtonOffMakesControllerRawOneToOne()
+    {
+        var cfg = new AppConfig { DirtyMeta = true };
+        cfg.NormalizeAttackOnly();
+        using var e = Engine(cfg);
+
+        e.SetAssistEnabled(false);
+        var p = Pad(
+            buttons:XButtons.A | XButtons.LeftShoulder,
+            lt:123, rt:210,
+            lx:-20000, ly:17000,
+            rx:14000, ry:-15000);
+
+        var r = e.ProcessFrameForTest(p);
+
+        Assert.Equal(p.Buttons, r.Buttons);
+        Assert.Equal(p.LeftTrigger, r.LT);
+        Assert.Equal(p.RightTrigger, r.RT);
+        Assert.Equal(p.ThumbLX, r.LX);
+        Assert.Equal(p.ThumbLY, r.LY);
+        Assert.Equal(p.ThumbRX, r.RX);
+        Assert.Equal(p.ThumbRY, r.RY);
+
+        e.SetAssistEnabled(true);
+        Assert.True(e.AssistEnabled);
+    }
+
+    [Fact]
     public void AttackModeIsPermanentAndLsAlwaysStaysPhysical()
     {
         var cfg = new AppConfig();
