@@ -156,11 +156,11 @@ public sealed class AppConfig
     public int RsRearmMs { get; set; } = 70;
     public int SkillStepMs { get; set; } = 42;
     public int SkillCooldownMs { get; set; } = 90;
-    public int BTapThresholdMs { get; set; } = 180;
-    public int LowDrivenChargeMs { get; set; } = 420;
-    public int BNormalShotCapMs { get; set; } = 620;
-    public int LowDrivenSecondTapGapMs { get; set; } = 30;
-    public int LowDrivenSecondTapMs { get; set; } = 45;
+    public int BTapThresholdMs { get; set; } = 160;
+    public int LowDrivenChargeMs { get; set; } = 250;
+    public int BNormalShotCapMs { get; set; } = 430;
+    public int LowDrivenSecondTapGapMs { get; set; } = 22;
+    public int LowDrivenSecondTapMs { get; set; } = 34;
     public int LbChordWindowMs { get; set; } = 65;
     public int InputLoopHz { get; set; } = 500;
     public bool AutoPress { get; set; } = true;
@@ -198,6 +198,11 @@ public sealed class AppConfig
         if (SkillStepMs == 52) SkillStepMs = 42;
         if (SkillCooldownMs == 130) SkillCooldownMs = 90;
         if (LbChordWindowMs == 85) LbChordWindowMs = 65;
+        if (BTapThresholdMs == 180) BTapThresholdMs = 160;
+        if (LowDrivenChargeMs == 420) LowDrivenChargeMs = 250;
+        if (BNormalShotCapMs == 620) BNormalShotCapMs = 430;
+        if (LowDrivenSecondTapGapMs == 30) LowDrivenSecondTapGapMs = 22;
+        if (LowDrivenSecondTapMs == 45) LowDrivenSecondTapMs = 34;
         InputLoopHz = Math.Max(500, InputLoopHz);
 
         var defaults = DefaultAttackSkillMap();
@@ -917,6 +922,9 @@ public sealed class ControllerEngine : IDisposable
     private bool _lowDrivenTail;
     private int _lowDrivenTailPhase;
     private long _lowDrivenPhaseStart;
+    private short _shotAimLX;
+    private short _shotAimLY;
+    private bool _shotAimLatched;
     private long _pressPhaseStart;
     private bool _pressOn;
     private long _dirtyBoostUntil;
@@ -1310,6 +1318,9 @@ public sealed class ControllerEngine : IDisposable
         _bNormalMode = false;
         _bCapped = false;
         _lowDrivenTail = false;
+        _shotAimLX = 0;
+        _shotAimLY = 0;
+        _shotAimLatched = false;
         _pressOn = false;
         _pressPhaseStart = 0;
         _dirtyBoostUntil = 0;
@@ -1475,6 +1486,28 @@ public sealed class ControllerEngine : IDisposable
         return x >= 0 ? "RIGHT" : "LEFT";
     }
 
+    private void TrackShotAim(XInputGamepad p, bool initialize)
+    {
+        double mag = Math.Sqrt((double)p.ThumbLX * p.ThumbLX + (double)p.ThumbLY * p.ThumbLY);
+
+        // On the first B frame take exactly what the user is holding, including center.
+        // Afterwards keep the last meaningful LS direction so releasing the stick a few
+        // milliseconds before the synthetic tail cannot redirect the shot to center.
+        if (initialize || mag >= 4500)
+        {
+            _shotAimLX = p.ThumbLX;
+            _shotAimLY = p.ThumbLY;
+            _shotAimLatched = true;
+        }
+    }
+
+    private void ApplyLatchedShotAim(VirtualReport r)
+    {
+        if (!_shotAimLatched) return;
+        r.LX = _shotAimLX;
+        r.LY = _shotAimLY;
+    }
+
     private void HandleShotB(XInputGamepad p, VirtualReport r, AppConfig cfg)
     {
         bool b = Btn(p.Buttons, XButtons.B);
@@ -1487,64 +1520,94 @@ public sealed class ControllerEngine : IDisposable
             _bNormalMode = false;
             _bStart = Stopwatch.GetTimestamp();
             _lowDrivenTail = false;
+            _lowDrivenTailPhase = 0;
+            TrackShotAim(p, true);
         }
 
-        // Attack-mode B is fully owned by the shot state machine.
+        if (_bActive && b)
+        {
+            // While the user is physically holding B, their LS remains live and becomes
+            // the latest shot aim. The app never invents a shooting direction.
+            TrackShotAim(p, false);
+        }
+
+        // B timing is owned by the shot state machine.
         r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.B);
 
         if (_bActive)
         {
             var held = MsSince(_bStart);
 
-            // If B is still physically held past the tap threshold, this is a normal shot.
-            if (!_bNormalMode && held > cfg.BTapThresholdMs)
+            if (!_bNormalMode && b && held >= cfg.BTapThresholdMs)
             {
                 _bNormalMode = true;
-                LastAction = "Normal Strong Shot";
+                LastAction = "Normal Shot";
             }
 
             if (!_bNormalMode)
             {
                 if (b)
                 {
-                    // Keep the initial press continuous while intent is still undecided.
+                    // User is still deciding between quick Low Driven and normal shot.
                     r.Buttons |= (ushort)XButtons.B;
                 }
                 else
                 {
-                    // Quick release: finish a calibrated first-shot charge, then add the second tap.
+                    // Quick tap. Freeze the user's latest meaningful LS direction for the
+                    // short synthetic tail and second B tap.
+                    TrackShotAim(p, false);
                     _bActive = false;
                     _lowDrivenTail = true;
                     _lowDrivenTailPhase = 0;
                     _lowDrivenPhaseStart = Stopwatch.GetTimestamp();
                     LastAction = "Low Driven Shot";
+                    ApplyLatchedShotAim(r);
                 }
             }
             else
             {
-                // Normal shot: user chooses hold intent; app chooses the maximum power.
-                if (held < cfg.BNormalShotCapMs && !_bCapped)
+                if (b)
                 {
-                    // Once Hold intent is confirmed, physical release no longer changes shot power.
+                    // Normal shot: aim follows the user's LS live while B is held.
                     r.Buttons |= (ushort)XButtons.B;
                 }
                 else
                 {
+                    // If the user releases before the calibrated power cap, keep only the
+                    // B charge alive. The shot direction stays locked to their last LS aim.
+                    TrackShotAim(p, false);
+                    ApplyLatchedShotAim(r);
+                    if (held < cfg.BNormalShotCapMs && !_bCapped)
+                    {
+                        r.Buttons |= (ushort)XButtons.B;
+                    }
+                    else
+                    {
+                        _bCapped = true;
+                        _bActive = false;
+                        _shotAimLatched = false;
+                    }
+                }
+
+                if (held >= cfg.BNormalShotCapMs)
+                {
                     _bCapped = true;
                     _bActive = false;
+                    _shotAimLatched = false;
+                    r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.B);
                 }
             }
         }
 
         if (_lowDrivenTail)
         {
+            ApplyLatchedShotAim(r);
             var totalCharge = MsSince(_bStart);
 
             if (_lowDrivenTailPhase == 0)
             {
                 if (totalCharge < cfg.LowDrivenChargeMs)
                 {
-                    // Continue the same first B press even though the user already released.
                     r.Buttons |= (ushort)XButtons.B;
                 }
                 else
@@ -1555,7 +1618,6 @@ public sealed class ControllerEngine : IDisposable
             }
             else if (_lowDrivenTailPhase == 1)
             {
-                // Required release gap between first charge and second B tap.
                 if (MsSince(_lowDrivenPhaseStart) >= cfg.LowDrivenSecondTapGapMs)
                 {
                     _lowDrivenTailPhase = 2;
@@ -1569,6 +1631,7 @@ public sealed class ControllerEngine : IDisposable
                 {
                     _lowDrivenTail = false;
                     _lowDrivenTailPhase = 0;
+                    _shotAimLatched = false;
                 }
             }
         }
@@ -1886,8 +1949,8 @@ public sealed class MainForm : Form
             TextAlign=ContentAlignment.TopLeft,
             Padding=new Padding(4,10,4,4),
             Text=T(
-                $"B نقرة سريعة  →  Low Driven تلقائي\nB ضغط مستمر  →  شوت عادي قوي (حد القوة {_cfg.BNormalShotCapMs}ms)\nاتجاه التسديد  →  LS بيدك 100% بدون تدخل\nA  →  تمريرة أرضية سريعة Driven (RB+A)\nY  →  تمريرة بينية أرضية عادية",
-                $"Quick B tap  →  automatic Low Driven\nHold B  →  strong normal shot (power cap {_cfg.BNormalShotCapMs}ms)\nShot direction  →  100% your LS\nA  →  fast Driven Ground Pass (RB+A)\nY  →  normal ground through pass")
+                $"B نقرة سريعة  →  Low Driven أرضي ودقيق\nB ضغط مستمر  →  شوت عادي مضبوط (حد القوة {_cfg.BNormalShotCapMs}ms)\nاتجاه التسديد  →  آخر اتجاه LS منك يثبت حتى خروج الكرة\nA  →  تمريرة أرضية سريعة Driven (RB+A)\nY  →  تمريرة بينية أرضية عادية",
+                $"Quick B tap  →  accurate Low Driven ground shot\nHold B  →  calibrated normal shot (power cap {_cfg.BNormalShotCapMs}ms)\nShot direction  →  your latest LS aim is held until the ball is struck\nA  →  fast Driven Ground Pass (RB+A)\nY  →  normal ground through pass")
         },0,1);
         shot.Controls.Add(shotLayout);
         root.Controls.Add(shot);
