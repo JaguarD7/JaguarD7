@@ -355,4 +355,86 @@ public class PlayLikeSimulationTests
             e.ProcessFrameForTest(Pad(lt:255), cfg); // release face input
         }
     }
+
+
+    [Fact]
+    public void RandomizedAttackFramesDoNotLeakShotModifiersOrThrow()
+    {
+        var cfg = new AppConfig
+        {
+            AutoPress=false,
+            DirtyMeta=true,
+            BTapThresholdMs=120,
+            LowDrivenChargeMs=240,
+            BNormalShotCapMs=320
+        };
+        using var e = Engine(cfg);
+        var rnd = new Random(27028);
+        var attackButtons = new[]
+        {
+            XButtons.A, XButtons.B, XButtons.X, XButtons.Y,
+            XButtons.LeftShoulder, XButtons.RightShoulder,
+            XButtons.A | XButtons.LeftShoulder,
+            XButtons.B | XButtons.LeftShoulder,
+            XButtons.B | XButtons.RightShoulder,
+            XButtons.Y | XButtons.LeftShoulder,
+            (XButtons)0
+        };
+
+        for (int i=0; i<3000; i++)
+        {
+            var b = attackButtons[rnd.Next(attackButtons.Length)];
+            short lx = (short)rnd.Next(-32767,32768);
+            short ly = (short)rnd.Next(-32767,32768);
+            short rx = (short)rnd.Next(-32767,32768);
+            short ry = (short)rnd.Next(-32767,32768);
+            byte rt = (byte)rnd.Next(0,256);
+
+            var r = e.ProcessFrameForTest(Pad(b, rt:rt, lx:lx, ly:ly, rx:rx, ry:ry), cfg);
+
+            Assert.InRange(r.LX, short.MinValue, short.MaxValue);
+            Assert.InRange(r.LY, short.MinValue, short.MaxValue);
+            Assert.InRange(r.RX, short.MinValue, short.MaxValue);
+            Assert.InRange(r.RY, short.MinValue, short.MaxValue);
+
+            if (e.LastAction is "Low Driven Shot" or "Normal Strong Shot")
+            {
+                Assert.False(Has(r, XButtons.LeftShoulder));
+                Assert.False(Has(r, XButtons.RightShoulder));
+            }
+
+            if ((b & (XButtons.A | XButtons.X | XButtons.Y)) != 0)
+                Assert.False(Has(r, XButtons.B));
+
+            if (i % 7 == 0)
+                e.ProcessFrameForTest(Pad(), cfg);
+        }
+    }
+
+    [Fact]
+    public void RepeatedModeSwitchesNeverReplayTheSameTransition()
+    {
+        var cfg = new AppConfig { AutoPress=false };
+        using var e = Engine(cfg);
+
+        var d1 = e.ProcessFrameForTest(Pad(lt:255), cfg);
+        Assert.Equal(PlayMode.Defense, e.Mode);
+        e.ProcessFrameForTest(Pad(lt:255), cfg);
+        Assert.Equal(PlayMode.Defense, e.Mode);
+
+        e.ProcessFrameForTest(Pad(), cfg);
+        var a1 = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
+        Assert.Equal(PlayMode.Attack, e.Mode);
+        Assert.False(Has(a1, XButtons.LeftShoulder));
+
+        var a2 = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
+        Assert.Equal(PlayMode.Attack, e.Mode);
+        Assert.False(Has(a2, XButtons.LeftShoulder)); // same transition press remains consumed
+
+        e.ProcessFrameForTest(Pad(), cfg);
+        e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
+        Thread.Sleep(cfg.LbChordWindowMs + 20);
+        var native = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
+        Assert.True(Has(native, XButtons.LeftShoulder)); // new LB press while already attacking is native
+    }
 }
