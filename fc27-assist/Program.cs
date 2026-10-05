@@ -495,23 +495,23 @@ public static class AutoUpdater
             int pid = Environment.ProcessId;
 
             static string Ps(string value) => "'" + value.Replace("'", "''") + "'";
-            File.WriteAllText(script, $"""
-$ErrorActionPreference = 'Stop'
-$pidToWait = {pid}
-$source = {Ps(extract)}
-$target = {Ps(target)}
-$targetExe = {Ps(targetExe)}
-$log = Join-Path $env:APPDATA 'FC27Assist\update.log'
-try {{
-    while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 250 }}
-    Start-Sleep -Milliseconds 300
-    Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
-    Start-Process -FilePath $targetExe
-}} catch {{
-    New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
-    Add-Content -Path $log -Value "[$(Get-Date)] $($_.Exception.ToString())"
-}}
-""");
+            var scriptText =
+                "$ErrorActionPreference = 'Stop'\r\n" +
+                "$pidToWait = " + pid + "\r\n" +
+                "$source = " + Ps(extract) + "\r\n" +
+                "$target = " + Ps(target) + "\r\n" +
+                "$targetExe = " + Ps(targetExe) + "\r\n" +
+                "$log = Join-Path $env:APPDATA 'FC27Assist\\update.log'\r\n" +
+                "try {\r\n" +
+                "    while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }\r\n" +
+                "    Start-Sleep -Milliseconds 300\r\n" +
+                "    Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force\r\n" +
+                "    Start-Process -FilePath $targetExe\r\n" +
+                "} catch {\r\n" +
+                "    New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null\r\n" +
+                "    Add-Content -Path $log -Value ('[' + (Get-Date) + '] ' + $_.Exception.ToString())\r\n" +
+                "}\r\n";
+            File.WriteAllText(script, scriptText);
 
             Process.Start(new ProcessStartInfo
             {
