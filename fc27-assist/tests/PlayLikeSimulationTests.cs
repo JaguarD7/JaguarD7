@@ -268,4 +268,91 @@ public class PlayLikeSimulationTests
         Assert.Equal((short)0, manual.LX);
         Assert.Equal((short)-25000, manual.LY);
     }
+
+
+    [Fact]
+    public void HeldAttackShotCannotLeakIntoDefenseAsTackle()
+    {
+        var cfg = new AppConfig { AutoPress=false };
+        using var e = Engine(cfg);
+
+        e.ProcessFrameForTest(Pad(XButtons.B), cfg);
+        var transition = e.ProcessFrameForTest(Pad(XButtons.B, lt:255), cfg);
+
+        Assert.Equal(PlayMode.Defense, e.Mode);
+        Assert.False(Has(transition, XButtons.B));
+
+        var stillHeld = e.ProcessFrameForTest(Pad(XButtons.B, lt:255), cfg);
+        Assert.False(Has(stillHeld, XButtons.B));
+
+        e.ProcessFrameForTest(Pad(lt:255), cfg); // physical B release
+        var newTackle = e.ProcessFrameForTest(Pad(XButtons.B, lt:255), cfg);
+        Assert.True(Has(newTackle, XButtons.B));
+    }
+
+    [Fact]
+    public void HeldDefenseFaceButtonCannotLeakIntoAttackCommand()
+    {
+        var cfg = new AppConfig { AutoPress=false };
+        using var e = Engine(cfg);
+        EnterDefense(e, cfg);
+
+        e.ProcessFrameForTest(Pad(XButtons.B), cfg); // defensive tackle begins
+        var transition = e.ProcessFrameForTest(Pad(XButtons.B | XButtons.LeftShoulder), cfg);
+
+        Assert.Equal(PlayMode.Attack, e.Mode);
+        Assert.False(Has(transition, XButtons.B));
+        Assert.False(Has(transition, XButtons.LeftShoulder));
+
+        e.ProcessFrameForTest(Pad(), cfg); // release everything
+        var newShot = e.ProcessFrameForTest(Pad(XButtons.B), cfg);
+        Assert.True(Has(newShot, XButtons.B));
+    }
+
+    [Fact]
+    public void ReleasingNativeLbWhileRsHeldDoesNotTriggerBaseSkill()
+    {
+        var cfg = new AppConfig { AutoPress=false };
+        using var e = Engine(cfg);
+
+        e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
+        Thread.Sleep(cfg.LbChordWindowMs + 20);
+        var native = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, rx:30000), cfg);
+        Assert.True(Has(native, XButtons.LeftShoulder));
+        Assert.Equal((short)30000, native.RX);
+
+        var releaseLb = e.ProcessFrameForTest(Pad(rx:30000), cfg);
+        Assert.NotEqual("Ball Roll Spin Right", e.LastAction);
+        Assert.Equal((short)0, releaseLb.RX);
+
+        e.ProcessFrameForTest(Pad(), cfg); // re-arm after RS center
+        e.ProcessFrameForTest(Pad(rx:30000), cfg);
+        Assert.Equal("Ball Roll Spin Right", e.LastAction);
+    }
+
+    [Fact]
+    public void RandomizedPlayFramesDoNotThrowOrEmitAutoPressWithManualDefenseFaceInput()
+    {
+        var cfg = new AppConfig { AutoPress=true, HardTackleAssist=false, DirtyMeta=true };
+        using var e = Engine(cfg);
+        var rnd = new Random(27027);
+
+        // Enter Defense, then fuzz common manual combinations.
+        EnterDefense(e, cfg);
+        var face = new[]{XButtons.A, XButtons.B, XButtons.X, XButtons.Y};
+
+        for (int i=0; i<2000; i++)
+        {
+            var f = face[rnd.Next(face.Length)];
+            short lx = (short)rnd.Next(-32767,32768);
+            short ly = (short)rnd.Next(-32767,32768);
+            short rx = (short)rnd.Next(-32767,32768);
+            short ry = (short)rnd.Next(-32767,32768);
+            var r = e.ProcessFrameForTest(Pad(f, lt:255, lx:lx, ly:ly, rx:rx, ry:ry), cfg);
+
+            Assert.True(Has(r, f));
+            Assert.False(Has(r, XButtons.RightShoulder));
+            e.ProcessFrameForTest(Pad(lt:255), cfg); // release face input
+        }
+    }
 }
