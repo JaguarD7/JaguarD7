@@ -373,6 +373,7 @@ public sealed class ControllerEngine : IDisposable
     private bool _lbRawPassed;
     private bool _prevLtModePressed;
     private double _lastPhysicalRsMagnitude;
+    private ushort _blockedUntilReleaseMask;
     private long _defensePressBlockUntil;
     private double _prevRsMagnitude;
 
@@ -465,6 +466,7 @@ public sealed class ControllerEngine : IDisposable
                 _lbModeTransitionConsumed = false;
                 _lbRawPassed = false;
                 _lastPhysicalRsMagnitude = 0;
+                _blockedUntilReleaseMask = 0;
                 _bActive = false;
                 _lowDrivenTail = false;
                 _pressOn = false;
@@ -515,7 +517,10 @@ public sealed class ControllerEngine : IDisposable
 
         // Mode changes are edge-triggered: one transition only.
         if (ltModePressed && !_prevLtModePressed && Mode != PlayMode.Defense)
+        {
+            _blockedUntilReleaseMask |= (ushort)(p.Buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y));
             SetMode(PlayMode.Defense);
+        }
 
         if (Rising(p.Buttons, _prevButtons, XButtons.LeftShoulder))
         {
@@ -525,6 +530,7 @@ public sealed class ControllerEngine : IDisposable
             _lbModeTransitionConsumed = Mode != PlayMode.Attack;
             if (_lbModeTransitionConsumed)
             {
+                _blockedUntilReleaseMask |= (ushort)(p.Buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y));
                 bool rsWasAlreadyHeld = _lastPhysicalRsMagnitude >= cfg.RsReleaseDeadzone;
                 SetMode(PlayMode.Attack);
                 _rsLatched = rsWasAlreadyHeld;
@@ -533,6 +539,11 @@ public sealed class ControllerEngine : IDisposable
 
         if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
         {
+            var currentRsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
+            if ((_lbChordConsumed || _lbModeTransitionConsumed || _lbRawPassed) &&
+                currentRsMag >= cfg.RsReleaseDeadzone)
+                _rsLatched = true;
+
             _lbChordConsumed = false;
             _lbModeTransitionConsumed = false;
             _lbRawPassed = false;
@@ -540,15 +551,20 @@ public sealed class ControllerEngine : IDisposable
 
         _prevLtModePressed = ltModePressed;
 
-        UpdateFacing(p);
+        // Any face button held while changing mode stays inert until physically released.
+        _blockedUntilReleaseMask = (ushort)(_blockedUntilReleaseMask & p.Buttons);
+        var effectiveP = p;
+        effectiveP.Buttons = (ushort)(p.Buttons & ~_blockedUntilReleaseMask);
+
+        UpdateFacing(effectiveP);
         var r = new VirtualReport
         {
-            Buttons=p.Buttons, LT=p.LeftTrigger, RT=p.RightTrigger,
-            LX=p.ThumbLX, LY=p.ThumbLY, RX=p.ThumbRX, RY=p.ThumbRY
+            Buttons=effectiveP.Buttons, LT=effectiveP.LeftTrigger, RT=effectiveP.RightTrigger,
+            LX=effectiveP.ThumbLX, LY=effectiveP.ThumbLY, RX=effectiveP.ThumbRX, RY=effectiveP.ThumbRY
         };
 
-        if (Mode == PlayMode.Attack) ApplyAttack(p, r, cfg);
-        else ApplyDefense(p, r, cfg);
+        if (Mode == PlayMode.Attack) ApplyAttack(effectiveP, r, cfg);
+        else ApplyDefense(effectiveP, r, cfg);
 
         if (_macro.Active)
         {
@@ -559,7 +575,7 @@ public sealed class ControllerEngine : IDisposable
         }
 
         if (cfg.DirtyMeta && Mode == PlayMode.Attack)
-            ApplyDirtyMeta(p, r, cfg);
+            ApplyDirtyMeta(effectiveP, r, cfg);
 
         _prevButtons = p.Buttons;
         _lastPhysicalRsMagnitude = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
@@ -576,6 +592,7 @@ public sealed class ControllerEngine : IDisposable
         _lbModeTransitionConsumed = false;
         _lbRawPassed = false;
         _lastPhysicalRsMagnitude = 0;
+        _blockedUntilReleaseMask = 0;
         _bActive = false;
         _bNormalMode = false;
         _bCapped = false;
