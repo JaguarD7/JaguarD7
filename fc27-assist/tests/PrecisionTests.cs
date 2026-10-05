@@ -224,4 +224,55 @@ public class PrecisionTests
         Assert.True(localLeft.y > 25000 && Math.Abs(localLeft.x) < 1000);
     }
 
+
+
+    [Fact]
+    public void EverySkillMacroHasSafeDurationsAndReleasesInjectedState()
+    {
+        foreach (var skill in SkillLibrary.Skills)
+        {
+            var steps = skill.Build(52);
+            Assert.NotEmpty(steps);
+
+            XButtons downSeen = 0;
+            XButtons upSeen = 0;
+            bool ltPressed = false, ltReleased = false;
+            bool rtPressed = false, rtReleased = false;
+            bool rsUsed = false, rsNeutralized = false;
+
+            foreach (var step in steps)
+            {
+                Assert.InRange(step.Ms, 1, 1000);
+                downSeen |= step.Down;
+                upSeen |= step.Up;
+
+                if (step.Lt is > 0) ltPressed = true;
+                if (step.Lt == 0) ltReleased = true;
+                if (step.Rt is > 0) rtPressed = true;
+                if (step.Rt == 0) rtReleased = true;
+
+                if (step.Rs != Dir.None) rsUsed = true;
+                if (step.NeutralRs) rsNeutralized = true;
+            }
+
+            Assert.Equal((ushort)0, (ushort)(downSeen & ~upSeen));
+            if (ltPressed) Assert.True(ltReleased, $"{skill.Name} leaves LT injected");
+            if (rtPressed) Assert.True(rtReleased, $"{skill.Name} leaves RT injected");
+            if (rsUsed) Assert.True(rsNeutralized, $"{skill.Name} does not neutralize RS");
+        }
+    }
+
+    [Fact]
+    public void CoreRightAndLeftSkillsProduceCorrectXInputSigns()
+    {
+        var right = MacroRunner.RotatedVector(Dir.Right, 0);
+        var left = MacroRunner.RotatedVector(Dir.Left, 0);
+        var fr = MacroRunner.RotatedVector(Dir.ForwardRight, 0);
+        var fl = MacroRunner.RotatedVector(Dir.ForwardLeft, 0);
+
+        Assert.True(right.x > 0);
+        Assert.True(left.x < 0);
+        Assert.True(fr.x > 0 && fr.y > 0);
+        Assert.True(fl.x < 0 && fl.y > 0);
+    }
 }
