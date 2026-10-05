@@ -790,6 +790,7 @@ public static class HidHideManager
 public sealed class ControllerEngine : IDisposable
 {
     private readonly object _gate = new();
+    private readonly object _outputGate = new();
     private readonly MacroRunner _macro = new();
     private AppConfig _cfg;
     private Thread? _thread;
@@ -831,6 +832,10 @@ public sealed class ControllerEngine : IDisposable
     private bool _blockDefenseRsUntilCenter;
     private long _defensePressBlockUntil;
     private double _prevRsMagnitude;
+    private long _physicalLostSince;
+    private long _lastVirtualRetry;
+    private long _lastLoopHeartbeat;
+    private System.Threading.Timer? _watchdog;
 
     public PlayMode Mode { get; private set; } = PlayMode.Attack;
     public bool Connected => _controllerConnected;
@@ -859,40 +864,85 @@ public sealed class ControllerEngine : IDisposable
     {
         if (_running) return;
 
-        // Lock onto the physical XInput slot before creating the virtual controller.
-        // This avoids accidentally reading our own ViGEm output if XInput ordering changes.
+        // Resolve the physical controller BEFORE ViGEm exists. Once the virtual pad is
+        // connected, a blind XInput scan could accidentally lock onto our own output.
         _physicalSlot = ResolvePhysicalSlot(_cfg.ControllerSlot);
         if (_physicalSlot < 0)
         {
-            Error = "No physical Xbox controller detected. Connect the wired controller, then restart FC27 Assist.";
+            Error = "No physical Xbox controller detected. Connect the wired controller, then rescan.";
             _vigemReady = false;
             _controllerConnected = false;
             StatusChanged?.Invoke();
             return;
         }
 
-        try
-        {
-            _client = new ViGEmClient();
-            _virtual = _client.CreateXbox360Controller();
-            _virtual.Connect();
-            var t = _virtual.GetType();
-            var m = t.GetMethod("SubmitReport");
-            if (m is null)
-                throw new MissingMethodException("ViGEm Xbox360Controller.SubmitReport was not found.");
+        _controllerConnected = true;
+        CreateVirtualController();
 
-            t.GetProperty("AutoSubmitReport")?.SetValue(_virtual, false);
-            _submit = (Action)Delegate.CreateDelegate(typeof(Action), _virtual, m);
-            _vigemReady = true;
-        }
-        catch (Exception ex)
-        {
-            Error = "ViGEm: " + ex.Message;
-            _vigemReady = false;
-        }
         _running = true;
+        _lastLoopHeartbeat = Stopwatch.GetTimestamp();
+        _watchdog = new System.Threading.Timer(_ =>
+        {
+            if (!_running) return;
+            try
+            {
+                if (_lastLoopHeartbeat != 0 && MsSince(_lastLoopHeartbeat) > 250)
+                    SendNeutral();
+            }
+            catch { }
+        }, null, 250, 100);
+
         _thread = new Thread(Loop) { IsBackground = true, Name = "FC27Assist.Input", Priority = ThreadPriority.AboveNormal };
         _thread.Start();
+    }
+
+    private bool CreateVirtualController()
+    {
+        lock (_outputGate)
+        {
+            try
+            {
+                if (_client is null)
+                    _client = new ViGEmClient();
+
+                _virtual = _client.CreateXbox360Controller();
+                _virtual.Connect();
+
+                var t = _virtual.GetType();
+                var m = t.GetMethod("SubmitReport");
+                if (m is null)
+                    throw new MissingMethodException("ViGEm Xbox360Controller.SubmitReport was not found.");
+
+                t.GetProperty("AutoSubmitReport")?.SetValue(_virtual, false);
+                _submit = (Action)Delegate.CreateDelegate(typeof(Action), _virtual, m);
+                _vigemReady = true;
+                Error = "";
+                StatusChanged?.Invoke();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Error = "ViGEm: " + ex.Message;
+                _vigemReady = false;
+                _submit = null;
+                StatusChanged?.Invoke();
+                return false;
+            }
+        }
+    }
+
+    private void DestroyVirtualController()
+    {
+        lock (_outputGate)
+        {
+            try { WriteReportUnsafe(new VirtualReport()); } catch { }
+            try { _virtual?.Disconnect(); } catch { }
+            try { (_virtual as IDisposable)?.Dispose(); } catch { }
+            _virtual = null;
+            _submit = null;
+            _vigemReady = false;
+        }
+        StatusChanged?.Invoke();
     }
 
     private static int ResolvePhysicalSlot(int preferred)
@@ -937,77 +987,133 @@ public sealed class ControllerEngine : IDisposable
         long hzStart = Stopwatch.GetTimestamp();
         long nextTick = Stopwatch.GetTimestamp();
         int ticks = 0;
+
         while (_running)
         {
-            AppConfig cfg; lock (_gate) cfg = _cfg;
-            int inputSlot = _physicalSlot >= 0 ? _physicalSlot : cfg.ControllerSlot;
-            if (!XInputNative.TryGetState(inputSlot, out var state))
+            _lastLoopHeartbeat = Stopwatch.GetTimestamp();
+
+            try
             {
-                // USB reconnects and HidHide can change XInput slot ordering.
-                // Immediately scan all slots and relock onto the real physical controller.
-                if (XInputNative.TryFindFirst(out var foundSlot, out var foundState))
+                AppConfig cfg; lock (_gate) cfg = _cfg;
+
+                // Never scan all XInput slots while the ViGEm pad exists. Doing so can
+                // select our own virtual controller and create a feedback/stuck-input loop.
+                if (_physicalSlot < 0 || !XInputNative.TryGetState(_physicalSlot, out var state))
                 {
-                    _physicalSlot = foundSlot;
-                    state = foundState;
-                    if (!_controllerConnected) { _controllerConnected = true; StatusChanged?.Invoke(); }
-                }
-                else
-                {
-                    _physicalSlot = -1;
-                    if (_controllerConnected) { _controllerConnected = false; StatusChanged?.Invoke(); }
-                _prevButtons = 0;
-                _prevLtModePressed = false;
-                _rsLatched = false;
-                _rsNeedsCenter = false;
-                _rsCenterSince = 0;
-                _prevRsMagnitude = 0;
-                _lbChordConsumed = false;
-                _lbModeTransitionConsumed = false;
-                _lbRawPassed = false;
-                _lastPhysicalRsMagnitude = 0;
-                _blockedUntilReleaseMask = 0;
-                _blockLtUntilRelease = false;
-                _blockDefenseRsUntilCenter = false;
-                _bActive = false;
-                _lowDrivenTail = false;
-                _pressOn = false;
-                _pressPhaseStart = 0;
-                    _macro.Cancel();
-                    Thread.Sleep(8);
+                    HandlePhysicalLoss(cfg);
+                    nextTick = Stopwatch.GetTimestamp();
                     continue;
                 }
+
+                _physicalLostSince = 0;
+                if (!_controllerConnected)
+                {
+                    _controllerConnected = true;
+                    LastAction = "Physical controller recovered";
+                    StatusChanged?.Invoke();
+                }
+
+                // If ViGEm failed independently, retry it while keeping physical input safe.
+                if (!_vigemReady && (_lastVirtualRetry == 0 || MsSince(_lastVirtualRetry) >= 1000))
+                {
+                    _lastVirtualRetry = Stopwatch.GetTimestamp();
+                    DestroyVirtualController();
+                    CreateVirtualController();
+                }
+
+                var p = state.Gamepad;
+                var r = ProcessFrameForTest(p, cfg);
+                Send(r);
+
+                ticks++;
+                if (MsSince(hzStart) >= 1000)
+                {
+                    LoopHz = ticks * 1000.0 / Math.Max(1, MsSince(hzStart));
+                    hzStart = Stopwatch.GetTimestamp();
+                    ticks = 0;
+                }
+
+                var targetHz = Math.Clamp(cfg.InputLoopHz, 250, 1000);
+                var tickTicks = Math.Max(1L, Stopwatch.Frequency / targetHz);
+                nextTick += tickTicks;
+                var nowTicks = Stopwatch.GetTimestamp();
+
+                if (nowTicks - nextTick > tickTicks * 4)
+                    nextTick = nowTicks + tickTicks;
+
+                while (_running)
+                {
+                    var remain = nextTick - Stopwatch.GetTimestamp();
+                    if (remain <= 0) break;
+                    if (remain > Stopwatch.Frequency / 700)
+                        Thread.Sleep(1);
+                    else
+                        Thread.SpinWait(32);
+                }
             }
-            if (!_controllerConnected) { _controllerConnected = true; StatusChanged?.Invoke(); }
-            var p = state.Gamepad;
-            var r = ProcessFrameForTest(p, cfg);
-            Send(r);
-            ticks++;
-            if (MsSince(hzStart) >= 1000)
+            catch (Exception ex)
             {
-                LoopHz = ticks * 1000.0 / Math.Max(1, MsSince(hzStart));
-                hzStart = Stopwatch.GetTimestamp(); ticks = 0;
-            }
-            var targetHz = Math.Clamp(cfg.InputLoopHz, 250, 1000);
-            var tickTicks = Math.Max(1L, Stopwatch.Frequency / targetHz);
-            nextTick += tickTicks;
-            var nowTicks = Stopwatch.GetTimestamp();
-
-            // If Windows pre-empted us for too long, resync instead of accumulating timing debt.
-            if (nowTicks - nextTick > tickTicks * 4)
-                nextTick = nowTicks + tickTicks;
-
-            while (_running)
-            {
-                var remain = nextTick - Stopwatch.GetTimestamp();
-                if (remain <= 0) break;
-
-                // Coarse sleep first, then spin for the final sub-millisecond slice.
-                if (remain > Stopwatch.Frequency / 700)
-                    Thread.Sleep(1);
-                else
-                    Thread.SpinWait(32);
+                // A runtime exception must never leave the last LS/RS/button state held.
+                CrashLogger.Log(ex);
+                Error = "Input loop recovered: " + ex.Message;
+                SendNeutral();
+                ResetInputStateForTest();
+                StatusChanged?.Invoke();
+                Thread.Sleep(20);
+                nextTick = Stopwatch.GetTimestamp();
             }
         }
+
+        SendNeutral();
+    }
+
+    private void HandlePhysicalLoss(AppConfig cfg)
+    {
+        if (_physicalLostSince == 0)
+        {
+            _physicalLostSince = Stopwatch.GetTimestamp();
+            SendNeutral();
+            ResetInputStateForTest();
+
+            if (_controllerConnected)
+            {
+                _controllerConnected = false;
+                LastAction = "Physical controller signal lost — neutralized";
+                StatusChanged?.Invoke();
+            }
+        }
+
+        // Short USB/XInput hiccup: only wait for the SAME physical slot.
+        // Do not scan other slots while ViGEm exists.
+        if (MsSince(_physicalLostSince) < 300)
+        {
+            Thread.Sleep(5);
+            return;
+        }
+
+        // Safe recovery: remove the virtual pad first. Only then may we scan all
+        // XInput slots, because any remaining XInput pad must be the real device.
+        if (_virtual is not null || _vigemReady)
+        {
+            DestroyVirtualController();
+            Thread.Sleep(80);
+        }
+
+        if (XInputNative.TryFindFirst(out var foundSlot, out _))
+        {
+            _physicalSlot = foundSlot;
+            _physicalLostSince = 0;
+            _controllerConnected = true;
+            LastAction = "Physical controller re-acquired on slot " + foundSlot;
+            Error = "";
+            ResetInputStateForTest();
+            CreateVirtualController();
+            StatusChanged?.Invoke();
+            return;
+        }
+
+        _physicalSlot = -1;
+        Thread.Sleep(40);
     }
 
     public VirtualReport ProcessFrameForTest(XInputGamepad p, AppConfig? cfgOverride = null)
@@ -1451,35 +1557,63 @@ public sealed class ControllerEngine : IDisposable
         }
     }
 
+    private void WriteReportUnsafe(VirtualReport r)
+    {
+        if (_virtual is null || _submit is null) return;
+        _virtual.ButtonState = r.Buttons;
+        _virtual.LeftTrigger = r.LT;
+        _virtual.RightTrigger = r.RT;
+        _virtual.LeftThumbX = r.LX;
+        _virtual.LeftThumbY = r.LY;
+        _virtual.RightThumbX = r.RX;
+        _virtual.RightThumbY = r.RY;
+        _submit.Invoke();
+    }
+
     private void Send(VirtualReport r)
     {
         if (!_vigemReady || _virtual is null) return;
-        try
+        lock (_outputGate)
         {
-            _virtual.ButtonState = r.Buttons;
-            _virtual.LeftTrigger = r.LT;
-            _virtual.RightTrigger = r.RT;
-            _virtual.LeftThumbX = r.LX;
-            _virtual.LeftThumbY = r.LY;
-            _virtual.RightThumbX = r.RX;
-            _virtual.RightThumbY = r.RY;
-            _submit?.Invoke();
+            try
+            {
+                WriteReportUnsafe(r);
+            }
+            catch (Exception ex)
+            {
+                Error = "ViGEm output: " + ex.Message;
+                _vigemReady = false;
+                StatusChanged?.Invoke();
+            }
         }
-        catch (Exception ex)
+    }
+
+    private void SendNeutral()
+    {
+        lock (_outputGate)
         {
-            Error = ex.Message;
-            _vigemReady = false;
-            StatusChanged?.Invoke();
+            try
+            {
+                if (_virtual is not null && _submit is not null)
+                    WriteReportUnsafe(new VirtualReport());
+            }
+            catch
+            {
+                _vigemReady = false;
+            }
         }
     }
 
     public void Dispose()
     {
         _running = false;
-        try { _thread?.Join(300); } catch { }
-        try { _virtual?.Disconnect(); } catch { }
-        try { (_virtual as IDisposable)?.Dispose(); } catch { }
+        try { _watchdog?.Dispose(); } catch { }
+        _watchdog = null;
+        SendNeutral();
+        try { _thread?.Join(500); } catch { }
+        DestroyVirtualController();
         try { _client?.Dispose(); } catch { }
+        _client = null;
     }
 }
 
