@@ -322,6 +322,21 @@ public sealed class MacroRunner
     }
 }
 
+public static class ConflictRules
+{
+    public static bool SuppressLb(bool modeTransitionConsumed, bool chordConsumed, double lbAgeMs, int chordWindowMs)
+        => modeTransitionConsumed || chordConsumed || lbAgeMs < chordWindowMs;
+
+    public static bool ManualFaceOverride(ushort buttons)
+        => (buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y)) != 0;
+
+    public static bool BlockAutoPress(ushort buttons, bool rsSwitchIntent)
+        => rsSwitchIntent || (buttons & (ushort)(XButtons.B | XButtons.X | XButtons.Y)) != 0;
+
+    public static bool ShotOwnsModifiers(bool bActive, bool lowDrivenTail)
+        => bActive || lowDrivenTail;
+}
+
 public sealed class ControllerEngine : IDisposable
 {
     private readonly object _gate = new();
@@ -575,14 +590,13 @@ public sealed class ControllerEngine : IDisposable
         if (Btn(p.Buttons, XButtons.LeftShoulder))
         {
             var lbAge = _lbDownAt == 0 ? double.MaxValue : MsSince(_lbDownAt);
-            if (_lbModeTransitionConsumed || _lbChordConsumed || lbAge < cfg.LbChordWindowMs)
+            if (ConflictRules.SuppressLb(_lbModeTransitionConsumed, _lbChordConsumed, lbAge, cfg.LbChordWindowMs))
                 r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.LeftShoulder);
         }
 
         // Manual face-button input always wins over a running skill macro.
         // This prevents injected skill buttons from mixing with pass/shot/cross commands.
-        if (_macro.Active && (Btn(p.Buttons, XButtons.A) || Btn(p.Buttons, XButtons.B) ||
-                             Btn(p.Buttons, XButtons.X) || Btn(p.Buttons, XButtons.Y)))
+        if (_macro.Active && ConflictRules.ManualFaceOverride(p.Buttons))
         {
             _macro.Cancel();
             _lastSkillEnd = Stopwatch.GetTimestamp();
@@ -605,7 +619,7 @@ public sealed class ControllerEngine : IDisposable
 
         // The calibrated B state machine owns shot modifiers while active.
         // Do not let a held LB/RB accidentally turn it into Chip/Finesse/Power Shot.
-        if (_bActive || _lowDrivenTail)
+        if (ConflictRules.ShotOwnsModifiers(_bActive, _lowDrivenTail))
             r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
     }
 
@@ -732,7 +746,8 @@ public sealed class ControllerEngine : IDisposable
         _prevRsMagnitude = rsMag;
 
         bool tackleOrKeeper = Btn(p.Buttons, XButtons.B) || Btn(p.Buttons, XButtons.X) || Btn(p.Buttons, XButtons.Y);
-        if (tackleOrKeeper || rsSwitchIntent)
+        bool conflictBlock = ConflictRules.BlockAutoPress(p.Buttons, rsSwitchIntent);
+        if (conflictBlock)
         {
             // Never combine automatic RB pressure with a manual tackle/slide/keeper rush/player switch.
             _defensePressBlockUntil = now + (long)(Stopwatch.Frequency * (tackleOrKeeper ? 0.28 : 0.16));
