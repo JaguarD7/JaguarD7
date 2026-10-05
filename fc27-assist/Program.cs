@@ -146,9 +146,9 @@ public static class SkillLibrary
         new(){ Name="Explosive Stepover", Stars=3, Category="Meta", Build=ms => Seq(
             S(ms, Dir.Forward, XButtons.LeftShoulder), S(ms, Dir.Right, XButtons.LeftShoulder), S(18, Dir.None, up:XButtons.LeftShoulder, neutralRs:true))},
         new(){ Name="Ball Roll Spin Right", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
-            S(Math.Max(70,ms+18), Dir.Right, XButtons.LeftShoulder), S(ms, Dir.Forward, XButtons.LeftShoulder), S(18, up:XButtons.LeftShoulder, neutralRs:true))},
+            S(Math.Max(70,ms+18), Dir.Right), S(ms, Dir.Forward), S(18, neutralRs:true))},
         new(){ Name="Ball Roll Spin Left", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
-            S(Math.Max(70,ms+18), Dir.Left, XButtons.LeftShoulder), S(ms, Dir.Forward, XButtons.LeftShoulder), S(18, up:XButtons.LeftShoulder, neutralRs:true))},
+            S(Math.Max(70,ms+18), Dir.Left), S(ms, Dir.Forward), S(18, neutralRs:true))},
         new(){ Name="Stepover Ball Right", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
             S(ms, Dir.Forward, XButtons.LeftShoulder), S(ms, Dir.Right, XButtons.LeftShoulder), S(18, up:XButtons.LeftShoulder, neutralRs:true))},
         new(){ Name="Stepover Ball Left", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
@@ -174,8 +174,8 @@ public static class SkillLibrary
         new(){ Name="Heel to Ball Roll", Stars=4, Category="Meta", Build=ms => Seq(S(ms,Dir.Forward,XButtons.LeftShoulder),S(ms,Dir.Back,XButtons.LeftShoulder),S(18,up:XButtons.LeftShoulder,neutralRs:true))},
         new(){ Name="Lane Change Right", Stars=4, Category="Meta", Build=ms => Seq(S(Math.Max(120,ms*2),Dir.Right,XButtons.LeftShoulder),S(20,up:XButtons.LeftShoulder,neutralRs:true))},
         new(){ Name="Lane Change Left", Stars=4, Category="Meta", Build=ms => Seq(S(Math.Max(120,ms*2),Dir.Left,XButtons.LeftShoulder),S(20,up:XButtons.LeftShoulder,neutralRs:true))},
-        new(){ Name="Drag Turn Right", Stars=4, NewFc27=true, Category="Fast", Build=ms => Seq(S(ms,Dir.Forward),S(ms,Dir.Right),S(20,neutralRs:true))},
-        new(){ Name="Drag Turn Left", Stars=4, NewFc27=true, Category="Fast", Build=ms => Seq(S(ms,Dir.Forward),S(ms,Dir.Left),S(20,neutralRs:true))},
+        new(){ Name="Drag Turn Right", Stars=4, NewFc27=true, Category="Fast", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Right),S(20,neutralRs:true))},
+        new(){ Name="Drag Turn Left", Stars=4, NewFc27=true, Category="Fast", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Left),S(20,neutralRs:true))},
         new(){ Name="Drag Back Spin Right", Stars=4, Category="Fast", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Right),S(20,neutralRs:true))},
         new(){ Name="Drag Back Spin Left", Stars=4, Category="Fast", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Left),S(20,neutralRs:true))},
         new(){ Name="Three Touch Roulette Right", Stars=4, Category="Direction", Build=ms => Seq(S(ms,Dir.Back,lt:255),S(ms,Dir.Right,lt:255),S(20,lt:0,neutralRs:true))},
@@ -204,8 +204,8 @@ public static class SkillLibrary
         new(){ Name="Feint Forward and Turn", Stars=2, Category="Direction", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Back),S(20,neutralRs:true))},
         new(){ Name="Stutter Feint Right", Stars=3, Category="Fast", Build=ms => Seq(S(ms,Dir.Left,lt:255),S(ms,Dir.Right,lt:255),S(20,lt:0,neutralRs:true))},
         new(){ Name="Stutter Feint Left", Stars=3, Category="Fast", Build=ms => Seq(S(ms,Dir.Right,lt:255),S(ms,Dir.Left,lt:255),S(20,lt:0,neutralRs:true))},
-        new(){ Name="Fake Left Go Right", Stars=3, Category="Direction", Build=ms => HalfCircle(ms,true)},
-        new(){ Name="Fake Right Go Left", Stars=3, Category="Direction", Build=ms => HalfCircle(ms,false)},
+        new(){ Name="Fake Left Go Right", Stars=3, Category="Direction", Build=ms => Seq(S(ms,Dir.Left),S(ms,Dir.Back),S(ms,Dir.Right),S(20,neutralRs:true))},
+        new(){ Name="Fake Right Go Left", Stars=3, Category="Direction", Build=ms => Seq(S(ms,Dir.Right),S(ms,Dir.Back),S(ms,Dir.Left),S(20,neutralRs:true))},
         new(){ Name="Flair Nutmeg", Stars=4, Category="Utility", Build=ms => Seq(S(ms,Dir.Forward,XButtons.LeftShoulder|XButtons.RightShoulder),S(20,up:XButtons.LeftShoulder|XButtons.RightShoulder,neutralRs:true))},
         new(){ Name="Spin Right", Stars=4, Category="Direction", Build=ms => CircleWithTrigger(ms,true,XButtons.RightShoulder,255)},
         new(){ Name="Spin Left", Stars=4, Category="Direction", Build=ms => CircleWithTrigger(ms,false,XButtons.RightShoulder,255)},
