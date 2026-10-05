@@ -4,28 +4,32 @@ using Xunit;
 public class PrecisionTests
 {
     [Fact]
-    public void CoreMappingsAreAttackOnlyUniqueAndRsOnlySafe()
+    public void EightMappingsExistAreUniqueAndReferenceValidSkills()
     {
         Assert.Equal(SkillLibrary.Skills.Count, SkillLibrary.Skills.Select(x => x.Name).Distinct().Count());
 
         var cfg = new AppConfig();
         cfg.NormalizeAttackOnly();
 
-        var keys = new[]{"RS_UP","RS_RIGHT","RS_LEFT","RS_DOWN"};
-        Assert.Equal(4, cfg.SkillMap.Count);
-        Assert.Equal(4, keys.Select(k => cfg.SkillMap[k]).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        var keys = new[]{
+            "RS_UP","RS_RIGHT","RS_LEFT","RS_DOWN",
+            "LB_RS_UP","LB_RS_RIGHT","LB_RS_LEFT","LB_RS_DOWN"
+        };
+
+        Assert.Equal(8, cfg.SkillMap.Count);
+        Assert.Equal(8, keys.Select(k => cfg.SkillMap[k]).Distinct(StringComparer.OrdinalIgnoreCase).Count());
 
         foreach (var key in keys)
         {
             Assert.True(cfg.SkillMap.ContainsKey(key), $"Missing mapping {key}");
-            Assert.True(SkillLibrary.IsRsOnlySafe(cfg.SkillMap[key]), $"{key} is not RS-only safe");
+            Assert.Contains(SkillLibrary.Skills, x => x.Name == cfg.SkillMap[key]);
         }
 
-        Assert.DoesNotContain(cfg.SkillMap.Keys, k => k.StartsWith("LB_RS_", StringComparison.OrdinalIgnoreCase));
         Assert.True(cfg.DirtyMeta);
         Assert.False(cfg.AutoPress);
         Assert.False(cfg.SprintJockeyAssist);
         Assert.False(cfg.HardTackleAssist);
+        Assert.True(cfg.InputLoopHz >= 500);
     }
 
     [Fact]
@@ -38,7 +42,8 @@ public class PrecisionTests
         Assert.InRange(c.LowDrivenSecondTapGapMs, 10, 100);
         Assert.InRange(c.LowDrivenSecondTapMs, 20, 100);
         Assert.InRange(c.RsRearmMs, 40, 250);
-        Assert.InRange(c.InputLoopHz, 250, 1000);
+        Assert.InRange(c.LbChordWindowMs, 40, 120);
+        Assert.InRange(c.InputLoopHz, 500, 1000);
     }
 
     [Fact]
@@ -136,23 +141,31 @@ public class PrecisionTests
     }
 
     [Fact]
-    public void DefaultMappedSkillsNeverInjectButtonsTriggersOrLs()
+    public void DefaultMappedSkillsAllTerminateTheirInjectedState()
     {
         var cfg = new AppConfig();
         cfg.NormalizeAttackOnly();
 
         foreach (var name in cfg.SkillMap.Values)
         {
-            Assert.True(SkillLibrary.IsRsOnlySafe(name));
-            foreach (var step in SkillLibrary.Get(name).Build(52))
+            var steps = SkillLibrary.Get(name).Build(cfg.SkillStepMs);
+            Assert.NotEmpty(steps);
+
+            XButtons down=0, up=0;
+            bool ltOn=false, ltOff=false, rtOn=false, rtOff=false;
+            foreach (var step in steps)
             {
-                Assert.Equal((XButtons)0, step.Down);
-                Assert.Equal((XButtons)0, step.Up);
-                Assert.Null(step.Lt);
-                Assert.Null(step.Rt);
-                Assert.Equal(Dir.None, step.Ls);
-                Assert.False(step.NeutralLs);
+                down |= step.Down;
+                up |= step.Up;
+                if (step.Lt is > 0) ltOn=true;
+                if (step.Lt == 0) ltOff=true;
+                if (step.Rt is > 0) rtOn=true;
+                if (step.Rt == 0) rtOff=true;
             }
+
+            Assert.Equal((ushort)0, (ushort)(down & ~up));
+            if (ltOn) Assert.True(ltOff, $"{name} leaves LT injected");
+            if (rtOn) Assert.True(rtOff, $"{name} leaves RT injected");
         }
     }
 
