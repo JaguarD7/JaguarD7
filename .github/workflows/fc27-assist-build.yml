@@ -27,6 +27,9 @@ jobs:
       - name: Restore
         run: dotnet restore fc27-assist/FC27Assist.csproj
 
+      - name: Precision regression tests
+        run: dotnet test fc27-assist/tests/FC27Assist.Tests.csproj -c Release --no-restore --verbosity normal
+
       - name: Publish Windows x64
         run: dotnet publish fc27-assist/FC27Assist.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o out
 
