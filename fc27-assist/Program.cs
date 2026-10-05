@@ -19,7 +19,7 @@ internal static class Program
 }
 
 public enum PlayMode { Attack, Defense }
-public enum Dir { None, Forward, Back, Left, Right }
+public enum Dir { None, Forward, ForwardRight, Right, BackRight, Back, BackLeft, Left, ForwardLeft }
 
 [Flags]
 public enum XButtons : ushort
@@ -149,7 +149,10 @@ public static class SkillLibrary
     public static readonly List<SkillDef> Skills = new()
     {
         new(){ Name="Explosive Stepover", Stars=3, Category="Meta", Build=ms => Seq(
-            S(ms, Dir.Forward, XButtons.LeftShoulder), S(ms, Dir.Right, XButtons.LeftShoulder), S(18, Dir.None, up:XButtons.LeftShoulder, neutralRs:true))},
+            S(Math.Max(24,ms/2), Dir.Forward, XButtons.LeftShoulder),
+            S(Math.Max(24,ms/2), Dir.ForwardRight, XButtons.LeftShoulder),
+            S(Math.Max(24,ms/2), Dir.Right, XButtons.LeftShoulder),
+            S(18, Dir.None, up:XButtons.LeftShoulder, neutralRs:true))},
         new(){ Name="Ball Roll Spin Right", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
             S(Math.Max(70,ms+18), Dir.Right), S(ms, Dir.Forward), S(18, neutralRs:true))},
         new(){ Name="Ball Roll Spin Left", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
@@ -171,10 +174,10 @@ public static class SkillLibrary
         new(){ Name="Ball Roll Left", Stars=2, Category="Fast", Build=ms => Seq(S(Math.Max(110,ms*2), Dir.Left), S(20, neutralRs:true))},
         new(){ Name="Body Feint Right", Stars=2, Category="Fast", Build=ms => Seq(S(ms, Dir.Right), S(20, neutralRs:true))},
         new(){ Name="Body Feint Left", Stars=2, Category="Fast", Build=ms => Seq(S(ms, Dir.Left), S(20, neutralRs:true))},
-        new(){ Name="Stepover Right", Stars=2, Category="Fast", Build=ms => Seq(S(ms,Dir.Forward),S(ms,Dir.Right),S(18,neutralRs:true))},
-        new(){ Name="Stepover Left", Stars=2, Category="Fast", Build=ms => Seq(S(ms,Dir.Forward),S(ms,Dir.Left),S(18,neutralRs:true))},
-        new(){ Name="Reverse Stepover Right", Stars=2, Category="Fast", Build=ms => Seq(S(ms,Dir.Right),S(ms,Dir.Forward),S(18,neutralRs:true))},
-        new(){ Name="Reverse Stepover Left", Stars=2, Category="Fast", Build=ms => Seq(S(ms,Dir.Left),S(ms,Dir.Forward),S(18,neutralRs:true))},
+        new(){ Name="Stepover Right", Stars=2, Category="Fast", Build=ms => QuarterArc(ms,true,false)},
+        new(){ Name="Stepover Left", Stars=2, Category="Fast", Build=ms => QuarterArc(ms,false,false)},
+        new(){ Name="Reverse Stepover Right", Stars=2, Category="Fast", Build=ms => QuarterArc(ms,true,true)},
+        new(){ Name="Reverse Stepover Left", Stars=2, Category="Fast", Build=ms => QuarterArc(ms,false,true)},
         new(){ Name="Heel Flick", Stars=3, Category="Fast", Build=ms => Seq(S(ms,Dir.Forward),S(ms,Dir.Back),S(18,neutralRs:true))},
         new(){ Name="Heel to Ball Roll", Stars=4, Category="Meta", Build=ms => Seq(S(ms,Dir.Forward,XButtons.LeftShoulder),S(ms,Dir.Back,XButtons.LeftShoulder),S(18,up:XButtons.LeftShoulder,neutralRs:true))},
         new(){ Name="Lane Change Right", Stars=4, Category="Meta", Build=ms => Seq(S(Math.Max(120,ms*2),Dir.Right,XButtons.LeftShoulder),S(20,up:XButtons.LeftShoulder,neutralRs:true))},
@@ -209,8 +212,8 @@ public static class SkillLibrary
         new(){ Name="Feint Forward and Turn", Stars=2, Category="Direction", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Back),S(20,neutralRs:true))},
         new(){ Name="Stutter Feint Right", Stars=3, Category="Fast", Build=ms => Seq(S(ms,Dir.Left,lt:255),S(ms,Dir.Right,lt:255),S(20,lt:0,neutralRs:true))},
         new(){ Name="Stutter Feint Left", Stars=3, Category="Fast", Build=ms => Seq(S(ms,Dir.Right,lt:255),S(ms,Dir.Left,lt:255),S(20,lt:0,neutralRs:true))},
-        new(){ Name="Fake Left Go Right", Stars=3, Category="Direction", Build=ms => Seq(S(ms,Dir.Left),S(ms,Dir.Back),S(ms,Dir.Right),S(20,neutralRs:true))},
-        new(){ Name="Fake Right Go Left", Stars=3, Category="Direction", Build=ms => Seq(S(ms,Dir.Right),S(ms,Dir.Back),S(ms,Dir.Left),S(20,neutralRs:true))},
+        new(){ Name="Fake Left Go Right", Stars=3, Category="Direction", Build=ms => HalfArc(ms,true)},
+        new(){ Name="Fake Right Go Left", Stars=3, Category="Direction", Build=ms => HalfArc(ms,false)},
         new(){ Name="Flair Nutmeg", Stars=4, Category="Utility", Build=ms => Seq(S(ms,Dir.Forward,XButtons.LeftShoulder|XButtons.RightShoulder),S(20,up:XButtons.LeftShoulder|XButtons.RightShoulder,neutralRs:true))},
         new(){ Name="Spin Right", Stars=4, Category="Direction", Build=ms => CircleWithTrigger(ms,true,XButtons.RightShoulder,255)},
         new(){ Name="Spin Left", Stars=4, Category="Direction", Build=ms => CircleWithTrigger(ms,false,XButtons.RightShoulder,255)},
@@ -219,27 +222,65 @@ public static class SkillLibrary
         new(){ Name="First Time Spin", Stars=5, NewFc27=true, Category="5★", Build=ms => Seq(new MacroStep(Math.Max(90,ms*2),Down:XButtons.LeftShoulder|XButtons.RightShoulder),new MacroStep(20,Up:XButtons.LeftShoulder|XButtons.RightShoulder))}
     };
 
+    private static int ArcStep(int ms) => Math.Max(18, ms / 2);
+
+    private static List<MacroStep> QuarterArc(int ms, bool right, bool reverse)
+    {
+        var q = ArcStep(ms);
+        Dir[] dirs = (right, reverse) switch
+        {
+            (true, false) => new[]{Dir.Forward, Dir.ForwardRight, Dir.Right},
+            (false, false) => new[]{Dir.Forward, Dir.ForwardLeft, Dir.Left},
+            (true, true) => new[]{Dir.Right, Dir.ForwardRight, Dir.Forward},
+            _ => new[]{Dir.Left, Dir.ForwardLeft, Dir.Forward}
+        };
+        var list = dirs.Select(d => S(q,d)).ToList();
+        list.Add(S(18,neutralRs:true));
+        return list;
+    }
+
     private static List<MacroStep> Arc(int ms, bool clockwise)
     {
-        return clockwise
-            ? Seq(S(ms,Dir.Right),S(ms,Dir.Back),S(ms,Dir.Left),S(20,neutralRs:true))
-            : Seq(S(ms,Dir.Left),S(ms,Dir.Back),S(ms,Dir.Right),S(20,neutralRs:true));
+        var q = ArcStep(ms);
+        var dirs = clockwise
+            ? new[]{Dir.Right,Dir.BackRight,Dir.Back,Dir.BackLeft,Dir.Left}
+            : new[]{Dir.Left,Dir.BackLeft,Dir.Back,Dir.BackRight,Dir.Right};
+        var list = dirs.Select(d => S(q,d)).ToList();
+        list.Add(S(20,neutralRs:true));
+        return list;
+    }
+
+    private static List<MacroStep> HalfArc(int ms, bool leftToRight)
+    {
+        var q = ArcStep(ms);
+        var dirs = leftToRight
+            ? new[]{Dir.Left,Dir.BackLeft,Dir.Back,Dir.BackRight,Dir.Right}
+            : new[]{Dir.Right,Dir.BackRight,Dir.Back,Dir.BackLeft,Dir.Left};
+        var list = dirs.Select(d => S(q,d)).ToList();
+        list.Add(S(20,neutralRs:true));
+        return list;
     }
 
     private static List<MacroStep> HalfCircle(int ms, bool clockwise) => Arc(ms, clockwise);
 
     private static List<MacroStep> Circle(int ms, bool clockwise, XButtons modifier)
     {
-        var dirs = clockwise ? new[]{Dir.Forward,Dir.Right,Dir.Back,Dir.Left} : new[]{Dir.Forward,Dir.Left,Dir.Back,Dir.Right};
-        var list = dirs.Select(d => S(ms,d,modifier)).ToList();
+        var q = ArcStep(ms);
+        var dirs = clockwise
+            ? new[]{Dir.Forward,Dir.ForwardRight,Dir.Right,Dir.BackRight,Dir.Back,Dir.BackLeft,Dir.Left,Dir.ForwardLeft}
+            : new[]{Dir.Forward,Dir.ForwardLeft,Dir.Left,Dir.BackLeft,Dir.Back,Dir.BackRight,Dir.Right,Dir.ForwardRight};
+        var list = dirs.Select(d => S(q,d,modifier)).ToList();
         list.Add(S(20,up:modifier,neutralRs:true));
         return list;
     }
 
     private static List<MacroStep> CircleWithTrigger(int ms, bool clockwise, XButtons modifier, byte lt)
     {
-        var dirs = clockwise ? new[]{Dir.Forward,Dir.Right,Dir.Back,Dir.Left} : new[]{Dir.Forward,Dir.Left,Dir.Back,Dir.Right};
-        var list = dirs.Select(d => S(ms,d,modifier,lt:lt)).ToList();
+        var q = ArcStep(ms);
+        var dirs = clockwise
+            ? new[]{Dir.Back,Dir.BackRight,Dir.Right,Dir.ForwardRight,Dir.Forward,Dir.ForwardLeft,Dir.Left}
+            : new[]{Dir.Back,Dir.BackLeft,Dir.Left,Dir.ForwardLeft,Dir.Forward,Dir.ForwardRight,Dir.Right};
+        var list = dirs.Select(d => S(q,d,modifier,lt:lt)).ToList();
         list.Add(S(20,up:modifier,lt:0,neutralRs:true));
         return list;
     }
@@ -287,8 +328,10 @@ public sealed class MacroRunner
     {
         if (!Active || _steps is null) return;
         var now = Stopwatch.GetTimestamp();
-        while (Active && now >= _stepDeadline)
+        if (Active && now >= _stepDeadline)
         {
+            // Never skip required macro edges after an OS scheduling stall.
+            // Advance at most one step per output frame so every press/release reaches ViGEm.
             _index++;
             if (!Active)
             {
@@ -297,7 +340,7 @@ public sealed class MacroRunner
                 Finished?.Invoke(done);
                 return;
             }
-            _stepDeadline = AddMs(_stepDeadline, Math.Max(1, _steps[_index].Ms));
+            _stepDeadline = AddMs(now, Math.Max(1, _steps[_index].Ms));
         }
         if (!Active || _steps is null) return;
         var s = _steps[_index];
@@ -315,9 +358,13 @@ public sealed class MacroRunner
         double baseAngle = d switch
         {
             Dir.Forward => 0,
+            Dir.ForwardRight => -Math.PI / 4,
             Dir.Right => -Math.PI / 2,
+            Dir.BackRight => -3 * Math.PI / 4,
             Dir.Back => Math.PI,
+            Dir.BackLeft => 3 * Math.PI / 4,
             Dir.Left => Math.PI / 2,
+            Dir.ForwardLeft => Math.PI / 4,
             _ => 0
         };
         var a = facing + baseAngle;
