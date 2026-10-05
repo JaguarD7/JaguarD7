@@ -1,0 +1,44 @@
+name: Build FC27 Assist
+
+on:
+  push:
+    branches: [fc27-assist-build]
+    paths:
+      - 'fc27-assist/**'
+      - '.github/workflows/fc27-assist-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore fc27-assist/FC27Assist.csproj
+
+      - name: Publish Windows x64
+        run: dotnet publish fc27-assist/FC27Assist.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o out
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Copy-Item fc27-assist/README.txt out/README.txt
+          Compress-Archive -Path out/* -DestinationPath FC27Assist_Windows_x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FC27Assist-Windows-x64
+          path: FC27Assist_Windows_x64.zip
+          if-no-files-found: error
