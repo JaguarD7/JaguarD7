@@ -192,48 +192,63 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void QuickBTapBecomesLowDrivenAndKeepsUserAim()
+    public void QuickBTapLocksUsersReleaseAimThroughLowDrivenTail()
     {
         var cfg = new AppConfig
         {
-            BTapThresholdMs=180,
-            LowDrivenChargeMs=260,
-            LowDrivenSecondTapGapMs=30,
-            LowDrivenSecondTapMs=45
+            BTapThresholdMs=160,
+            LowDrivenChargeMs=250,
+            LowDrivenSecondTapGapMs=22,
+            LowDrivenSecondTapMs=34
         };
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
         var down = e.ProcessFrameForTest(Pad(XButtons.B, lx:18000, ly:22000), cfg);
         Assert.True(Has(down, XButtons.B));
-        Assert.Equal((short)18000, down.LX);
-        Assert.Equal((short)22000, down.LY);
 
-        Thread.Sleep(45);
-        var released = e.ProcessFrameForTest(Pad(lx:18000, ly:22000), cfg);
+        Thread.Sleep(40);
 
+        // User chooses a new aim at physical B release. This exact LS direction becomes the shot aim.
+        var released = e.ProcessFrameForTest(Pad(lx:-21000, ly:16000), cfg);
         Assert.Equal("Low Driven Shot", e.LastAction);
         Assert.True(Has(released, XButtons.B));
-        Assert.Equal((short)18000, released.LX);
-        Assert.Equal((short)22000, released.LY);
+        Assert.Equal((short)-21000, released.LX);
+        Assert.Equal((short)16000, released.LY);
+
+        // Moving LS after release must not randomly redirect the synthetic shot tail.
+        var syntheticTail = e.ProcessFrameForTest(Pad(lx:25000, ly:-19000), cfg);
+        Assert.Equal((short)-21000, syntheticTail.LX);
+        Assert.Equal((short)16000, syntheticTail.LY);
     }
 
     [Fact]
-    public void HoldBUsesProgramPowerAndKeepsUserAim()
+    public void NormalShotTracksLsWhileHeldThenLocksLastUserAim()
     {
-        var cfg = new AppConfig { BTapThresholdMs=100, BNormalShotCapMs=280 };
+        var cfg = new AppConfig { BTapThresholdMs=100, BNormalShotCapMs=300 };
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
         e.ProcessFrameForTest(Pad(XButtons.B, lx:-19000, ly:26000), cfg);
         Thread.Sleep(125);
 
-        var classified = e.ProcessFrameForTest(Pad(XButtons.B, lx:-19000, ly:26000), cfg);
+        // While B is still held, aim follows the physical LS live.
+        var held = e.ProcessFrameForTest(Pad(XButtons.B, lx:15000, ly:27000), cfg);
+        Assert.Equal("Normal Shot", e.LastAction);
+        Assert.True(Has(held, XButtons.B));
+        Assert.Equal((short)15000, held.LX);
+        Assert.Equal((short)27000, held.LY);
 
-        Assert.Equal("Normal Strong Shot", e.LastAction);
-        Assert.True(Has(classified, XButtons.B));
-        Assert.Equal((short)-19000, classified.LX);
-        Assert.Equal((short)26000, classified.LY);
+        // Physical B release chooses/fixes the final user aim.
+        var released = e.ProcessFrameForTest(Pad(lx:-23000, ly:12000), cfg);
+        Assert.True(Has(released, XButtons.B));
+        Assert.Equal((short)-23000, released.LX);
+        Assert.Equal((short)12000, released.LY);
+
+        // Later LS movement cannot randomly redirect the still-automated charge.
+        var tail = e.ProcessFrameForTest(Pad(lx:26000, ly:-15000), cfg);
+        Assert.Equal((short)-23000, tail.LX);
+        Assert.Equal((short)12000, tail.LY);
     }
 
     [Fact]
@@ -268,7 +283,7 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void RandomizedAttackFramesStayAttackOnlyAndNeverAlterLs()
+    public void RandomizedNonShotFramesStayAttackOnlyAndNeverAlterLs()
     {
         var cfg = new AppConfig();
         cfg.NormalizeAttackOnly();
@@ -277,7 +292,7 @@ public class PlayLikeSimulationTests
 
         var buttons = new[]
         {
-            XButtons.A, XButtons.B, XButtons.X, XButtons.Y,
+            XButtons.A, XButtons.X, XButtons.Y,
             XButtons.LeftShoulder,
             XButtons.LeftShoulder | XButtons.A,
             XButtons.LeftShoulder | XButtons.Y,
