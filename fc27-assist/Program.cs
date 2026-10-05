@@ -130,6 +130,7 @@ public sealed class AppConfig
     public bool DirtyMeta { get; set; } = false;
     public int RsTriggerDeadzone { get; set; } = 18500;
     public int RsReleaseDeadzone { get; set; } = 9000;
+    public int RsRearmMs { get; set; } = 90;
     public int SkillStepMs { get; set; } = 52;
     public int SkillCooldownMs { get; set; } = 130;
     public int BTapThresholdMs { get; set; } = 180;
@@ -801,6 +802,8 @@ public sealed class ControllerEngine : IDisposable
     private bool _vigemReady;
     private ushort _prevButtons;
     private bool _rsLatched;
+    private bool _rsNeedsCenter;
+    private long _rsCenterSince;
     private long _lastSkillEnd;
     private double _facingRad;
     private bool _bActive;
@@ -914,6 +917,8 @@ public sealed class ControllerEngine : IDisposable
         Mode = mode;
         _macro.Cancel();
         _rsLatched = false;
+        _rsNeedsCenter = false;
+        _rsCenterSince = 0;
         _bActive = false;
         _lowDrivenTail = false;
         _bNormalMode = false;
@@ -953,6 +958,8 @@ public sealed class ControllerEngine : IDisposable
                 _prevButtons = 0;
                 _prevLtModePressed = false;
                 _rsLatched = false;
+                _rsNeedsCenter = false;
+                _rsCenterSince = 0;
                 _prevRsMagnitude = 0;
                 _lbChordConsumed = false;
                 _lbModeTransitionConsumed = false;
@@ -1102,6 +1109,8 @@ public sealed class ControllerEngine : IDisposable
         _prevButtons = 0;
         _prevLtModePressed = false;
         _rsLatched = false;
+        _rsNeedsCenter = false;
+        _rsCenterSince = 0;
         _prevRsMagnitude = 0;
         _lbChordConsumed = false;
         _lbModeTransitionConsumed = false;
@@ -1156,7 +1165,33 @@ public sealed class ControllerEngine : IDisposable
         bool lbHeld = Btn(p.Buttons, XButtons.LeftShoulder);
         var lbAge = _lbDownAt == 0 ? double.MaxValue : MsSince(_lbDownAt);
 
-        if (rsMag < cfg.RsReleaseDeadzone) _rsLatched = false;
+        // One Flick = One Command.
+        // After a skill fires, the physical RS must return to center and remain there
+        // briefly before another skill can arm. A held direction or stick jitter
+        // therefore cannot repeat the same command after the macro/cooldown ends.
+        if (_rsNeedsCenter)
+        {
+            if (rsMag < cfg.RsReleaseDeadzone)
+            {
+                if (_rsCenterSince == 0)
+                    _rsCenterSince = Stopwatch.GetTimestamp();
+
+                if (MsSince(_rsCenterSince) >= Math.Clamp(cfg.RsRearmMs, 40, 250))
+                {
+                    _rsNeedsCenter = false;
+                    _rsLatched = false;
+                    _rsCenterSince = 0;
+                }
+            }
+            else
+            {
+                _rsCenterSince = 0;
+            }
+        }
+        else if (rsMag < cfg.RsReleaseDeadzone)
+        {
+            _rsLatched = false;
+        }
 
         // LB is a chord candidate only during the short intent window.
         // Once native LB has been released to the game, RS is passed through until LB is released.
@@ -1176,7 +1211,7 @@ public sealed class ControllerEngine : IDisposable
             bool lbSkillModifier = lbHeld &&
                 (!_lbModeTransitionConsumed || lbAge <= cfg.LbChordWindowMs);
 
-            if (!_rsLatched && !_macro.Active && rsMag >= cfg.RsTriggerDeadzone && SkillReady(cfg))
+            if (!_rsLatched && !_rsNeedsCenter && !_macro.Active && rsMag >= cfg.RsTriggerDeadzone && SkillReady(cfg))
             {
                 var dir = Cardinal(p.ThumbRX, p.ThumbRY);
                 string key = (lbSkillModifier ? "LB_RS_" : "RS_") + dir;
@@ -1187,6 +1222,8 @@ public sealed class ControllerEngine : IDisposable
                     _macro.Start(skill.Name, skill.Build(cfg.SkillStepMs), _facingRad);
                     LastAction = skill.Name;
                     _rsLatched = true;
+                    _rsNeedsCenter = true;
+                    _rsCenterSince = 0;
                 }
             }
         }
@@ -1765,7 +1802,7 @@ public sealed class MainForm : Form
     private void CopyConfig(AppConfig src, AppConfig dst)
     {
         var lang=dst.Language; var fresh=src;
-        dst.ControllerSlot=fresh.ControllerSlot;dst.DirtyMeta=fresh.DirtyMeta;dst.RsTriggerDeadzone=fresh.RsTriggerDeadzone;dst.RsReleaseDeadzone=fresh.RsReleaseDeadzone;dst.SkillStepMs=fresh.SkillStepMs;dst.SkillCooldownMs=fresh.SkillCooldownMs;dst.BTapThresholdMs=fresh.BTapThresholdMs;dst.LowDrivenChargeMs=fresh.LowDrivenChargeMs;dst.BNormalShotCapMs=fresh.BNormalShotCapMs;dst.LowDrivenSecondTapGapMs=fresh.LowDrivenSecondTapGapMs;dst.LowDrivenSecondTapMs=fresh.LowDrivenSecondTapMs;dst.LbChordWindowMs=fresh.LbChordWindowMs;dst.InputLoopHz=fresh.InputLoopHz;dst.AutoPress=fresh.AutoPress;dst.PressureStrength=fresh.PressureStrength;dst.SprintJockeyAssist=fresh.SprintJockeyAssist;dst.HardTackleAssist=fresh.HardTackleAssist;dst.SkillMap=new Dictionary<string,string>(fresh.SkillMap);dst.Language=lang;
+        dst.ControllerSlot=fresh.ControllerSlot;dst.DirtyMeta=fresh.DirtyMeta;dst.RsTriggerDeadzone=fresh.RsTriggerDeadzone;dst.RsReleaseDeadzone=fresh.RsReleaseDeadzone;dst.RsRearmMs=fresh.RsRearmMs;dst.SkillStepMs=fresh.SkillStepMs;dst.SkillCooldownMs=fresh.SkillCooldownMs;dst.BTapThresholdMs=fresh.BTapThresholdMs;dst.LowDrivenChargeMs=fresh.LowDrivenChargeMs;dst.BNormalShotCapMs=fresh.BNormalShotCapMs;dst.LowDrivenSecondTapGapMs=fresh.LowDrivenSecondTapGapMs;dst.LowDrivenSecondTapMs=fresh.LowDrivenSecondTapMs;dst.LbChordWindowMs=fresh.LbChordWindowMs;dst.InputLoopHz=fresh.InputLoopHz;dst.AutoPress=fresh.AutoPress;dst.PressureStrength=fresh.PressureStrength;dst.SprintJockeyAssist=fresh.SprintJockeyAssist;dst.HardTackleAssist=fresh.HardTackleAssist;dst.SkillMap=new Dictionary<string,string>(fresh.SkillMap);dst.Language=lang;
     }
 
     private void AddNumeric(TableLayoutPanel t,int row,string name,int val,int min,int max,Action<int> set)
