@@ -75,9 +75,12 @@ public sealed class AppConfig
     public int SkillStepMs { get; set; } = 52;
     public int SkillCooldownMs { get; set; } = 130;
     public int BTapThresholdMs { get; set; } = 180;
+    public int LowDrivenChargeMs { get; set; } = 420;
     public int BNormalShotCapMs { get; set; } = 620;
     public int LowDrivenSecondTapGapMs { get; set; } = 30;
     public int LowDrivenSecondTapMs { get; set; } = 45;
+    public int LbChordWindowMs { get; set; } = 85;
+    public int InputLoopHz { get; set; } = 500;
     public bool AutoPress { get; set; } = true;
     public string PressureStrength { get; set; } = "Balanced";
     public bool SprintJockeyAssist { get; set; } = true;
@@ -242,7 +245,7 @@ public sealed class MacroRunner
 {
     private List<MacroStep>? _steps;
     private int _index;
-    private long _stepStart;
+    private long _stepDeadline;
     private double _facingRad;
     public bool Active => _steps is { Count: > 0 } && _index < _steps.Count;
     public string CurrentName { get; private set; } = "";
@@ -252,7 +255,8 @@ public sealed class MacroRunner
     {
         _steps = steps;
         _index = 0;
-        _stepStart = Stopwatch.GetTimestamp();
+        var now = Stopwatch.GetTimestamp();
+        _stepDeadline = AddMs(now, Math.Max(1, steps[0].Ms));
         _facingRad = facingRad;
         CurrentName = name;
     }
@@ -264,14 +268,14 @@ public sealed class MacroRunner
         CurrentName = "";
     }
 
-    private static double ElapsedMs(long start) => (Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency;
+    private static long AddMs(long ticks, int ms) => ticks + (long)(Stopwatch.Frequency * (ms / 1000.0));
 
     public void Apply(VirtualReport r)
     {
         if (!Active || _steps is null) return;
-        while (Active && ElapsedMs(_stepStart) >= _steps[_index].Ms)
+        var now = Stopwatch.GetTimestamp();
+        while (Active && now >= _stepDeadline)
         {
-            _stepStart = Stopwatch.GetTimestamp();
             _index++;
             if (!Active)
             {
@@ -280,6 +284,7 @@ public sealed class MacroRunner
                 Finished?.Invoke(done);
                 return;
             }
+            _stepDeadline = AddMs(_stepDeadline, Math.Max(1, _steps[_index].Ms));
         }
         if (!Active || _steps is null) return;
         var s = _steps[_index];
