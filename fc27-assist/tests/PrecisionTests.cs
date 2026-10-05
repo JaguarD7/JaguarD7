@@ -4,7 +4,7 @@ using Xunit;
 public class PrecisionTests
 {
     [Fact]
-    public void EightMappingsExistAreUniqueAndReferenceValidSkills()
+    public void CoreMappingsArePairedAndLbLayerRemainsFourDistinctSkills()
     {
         Assert.Equal(SkillLibrary.Skills.Count, SkillLibrary.Skills.Select(x => x.Name).Distinct().Count());
 
@@ -17,13 +17,21 @@ public class PrecisionTests
         };
 
         Assert.Equal(8, cfg.SkillMap.Count);
-        Assert.Equal(8, keys.Select(k => cfg.SkillMap[k]).Distinct(StringComparer.OrdinalIgnoreCase).Count());
-
         foreach (var key in keys)
         {
             Assert.True(cfg.SkillMap.ContainsKey(key), $"Missing mapping {key}");
             Assert.Contains(SkillLibrary.Skills, x => x.Name == cfg.SkillMap[key]);
         }
+
+        Assert.Equal(cfg.SkillMap["RS_UP"], cfg.SkillMap["RS_DOWN"]);
+        Assert.Equal(cfg.SkillMap["RS_RIGHT"], cfg.SkillMap["RS_LEFT"]);
+        Assert.NotEqual(cfg.SkillMap["RS_UP"], cfg.SkillMap["RS_RIGHT"]);
+
+        var lb = new[]{"LB_RS_UP","LB_RS_RIGHT","LB_RS_LEFT","LB_RS_DOWN"};
+        Assert.Equal(4, lb.Select(k => cfg.SkillMap[k]).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        Assert.Equal("Explosive Stepover", cfg.SkillMap["RS_UP"]);
+        Assert.Equal("Heel to Ball Roll", cfg.SkillMap["RS_RIGHT"]);
 
         Assert.True(cfg.DirtyMeta);
         Assert.False(cfg.AutoPress);
