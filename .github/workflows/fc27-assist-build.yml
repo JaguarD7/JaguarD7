@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -31,7 +31,7 @@ jobs:
         run: dotnet test fc27-assist/tests/FC27Assist.Tests.csproj -c Release --no-restore --verbosity normal
 
       - name: Publish Windows x64
-        run: dotnet publish fc27-assist/FC27Assist.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o out
+        run: dotnet publish fc27-assist/FC27Assist.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:Version=1.0.${{ github.run_number }} -o out
 
       - name: Package
         shell: pwsh
@@ -45,3 +45,37 @@ jobs:
           name: FC27Assist-Windows-x64
           path: FC27Assist_Windows_x64.zip
           if-no-files-found: error
+
+
+      - name: Publish auto-update channel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "1.0.${{ github.run_number }}"
+          $dist = Join-Path $env:RUNNER_TEMP "fc27-assist-dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+
+          Copy-Item "FC27Assist_Windows_x64.zip" (Join-Path $dist "FC27Assist_Update.zip") -Force
+          $sha = (Get-FileHash (Join-Path $dist "FC27Assist_Update.zip") -Algorithm SHA256).Hash.ToUpperInvariant()
+
+          $manifest = [ordered]@{
+            version = $version
+            url = "https://raw.githubusercontent.com/JaguarD7/JaguarD7/fc27-assist-dist/FC27Assist_Update.zip"
+            sha256 = $sha
+            commit = "${{ github.sha }}"
+          } | ConvertTo-Json -Depth 3
+          Set-Content -Path (Join-Path $dist "version.json") -Value $manifest -Encoding UTF8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git switch --orphan fc27-assist-dist-temp
+          git rm -rf .
+          git clean -fdx
+
+          Copy-Item (Join-Path $dist "FC27Assist_Update.zip") "FC27Assist_Update.zip"
+          Copy-Item (Join-Path $dist "version.json") "version.json"
+
+          git add FC27Assist_Update.zip version.json
+          git commit -m "FC27 Assist auto-update $version"
+          git push origin HEAD:fc27-assist-dist --force
