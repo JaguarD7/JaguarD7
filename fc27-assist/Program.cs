@@ -177,11 +177,11 @@ public sealed class AppConfig
 
     public static Dictionary<string, string> DefaultAttackSkillMap() => new()
     {
-        // Four always-available fast/meta skills.
+        // Two easy core actions, duplicated by direction pair for fast muscle memory.
         ["RS_UP"] = "Explosive Stepover",
-        ["RS_RIGHT"] = "Ball Roll Spin Right",
-        ["RS_LEFT"] = "Heel Flick",
-        ["RS_DOWN"] = "Heel to Ball Roll",
+        ["RS_DOWN"] = "Explosive Stepover",
+        ["RS_RIGHT"] = "Heel to Ball Roll",
+        ["RS_LEFT"] = "Heel to Ball Roll",
 
         // Four secondary skills, selected by holding LB while flicking RS.
         ["LB_RS_UP"] = "Lateral Heel to Heel",
@@ -226,25 +226,51 @@ public sealed class AppConfig
                 SkillMap[key] = defaults[key];
         }
 
-        // All eight shortcuts must remain different so left/right/up/down never collapse
-        // onto the same command because of an old config.
-        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var key in keys)
+        // Core shortcuts are intentionally paired:
+        // UP/DOWN trigger the same direct-beat move, RIGHT/LEFT trigger the same escape move.
+        // Migrate the previous four-distinct core layout to the simpler pair layout.
+        var oldCore = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Explosive Stepover", "Ball Roll Spin Right", "Heel Flick", "Heel to Ball Roll"
+        };
+        bool looksLikeOldCore =
+            oldCore.Contains(SkillMap["RS_UP"]) &&
+            oldCore.Contains(SkillMap["RS_DOWN"]) &&
+            oldCore.Contains(SkillMap["RS_RIGHT"]) &&
+            oldCore.Contains(SkillMap["RS_LEFT"]);
+
+        if (looksLikeOldCore)
+        {
+            SkillMap["RS_UP"] = defaults["RS_UP"];
+            SkillMap["RS_DOWN"] = defaults["RS_DOWN"];
+            SkillMap["RS_RIGHT"] = defaults["RS_RIGHT"];
+            SkillMap["RS_LEFT"] = defaults["RS_LEFT"];
+        }
+        else
+        {
+            SkillMap["RS_DOWN"] = SkillMap["RS_UP"];
+            SkillMap["RS_LEFT"] = SkillMap["RS_RIGHT"];
+        }
+
+        // LB layer stays four separate secondary moves.
+        var lbKeys = new[]{"LB_RS_UP","LB_RS_RIGHT","LB_RS_LEFT","LB_RS_DOWN"};
+        var usedLb = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in lbKeys)
         {
             var name = SkillMap[key];
-            if (used.Add(name)) continue;
+            if (usedLb.Add(name)) continue;
 
             var fallback = defaults[key];
-            if (!used.Contains(fallback))
+            if (!usedLb.Contains(fallback))
             {
                 SkillMap[key] = fallback;
-                used.Add(fallback);
+                usedLb.Add(fallback);
                 continue;
             }
 
-            var replacement = SkillLibrary.Skills.First(x => !used.Contains(x.Name)).Name;
+            var replacement = SkillLibrary.Skills.First(x => !usedLb.Contains(x.Name)).Name;
             SkillMap[key] = replacement;
-            used.Add(replacement);
+            usedLb.Add(replacement);
         }
 
         foreach (var stale in SkillMap.Keys.Where(k => !defaults.ContainsKey(k)).ToArray())
@@ -2050,7 +2076,7 @@ public sealed class MainForm : Form
         root.Controls.Add(dirty);
 
         var info=PanelCard(170); info.Controls.Add(BigLabel(T("منع التعارض","CONFLICT CONTROL")));
-        info.Controls.Add(new Label{Text=T("RS فيه 4 مهارات أساسية وLB + RS فيه 4 مهارات مختلفة. LB لوحده يبقى لتبديل اللاعبين. A تمرير سريع وY بينية أرضية.","RS has 4 core skills and LB + RS has 4 different skills. LB alone remains available for player switching. A is fast passing and Y is a ground through pass."),AutoSize=false,Height=72,Dock=DockStyle.Fill,ForeColor=_muted,Padding=new Padding(0,12,0,0)});
+        info.Controls.Add(new Label{Text=T("RS الأساسي مبسط: ↑/↓ نفس مهارة التجاوز، و←/→ نفس مهارة الخروج الجانبي. LB + RS فيه 4 مهارات إضافية مختلفة.","Core RS is simplified: ↑/↓ share one beat-the-man move, and ←/→ share one lateral escape move. LB + RS keeps four different secondary skills."),AutoSize=false,Height=72,Dock=DockStyle.Fill,ForeColor=_muted,Padding=new Padding(0,12,0,0)});
         root.Controls.Add(info);
         return root;
     }
@@ -2059,8 +2085,8 @@ public sealed class MainForm : Form
     {
         var root=Stack();
         root.Controls.Add(Title(
-            T("الهجوم — 8 مهارات","Attack — 8 Skills"),
-            T("4 مهارات سريعة على RS مباشرة، و4 إضافية على LB + RS. لا يوجد وضع دفاع.","4 fast skills on RS, plus 4 different skills on LB + RS. There is no defense mode.")));
+            T("الهجوم — اختصارات سهلة","Attack — Easy Shortcuts"),
+            T("↑/↓ نفس مهارة التجاوز، ←/→ نفس مهارة الخروج، و4 مهارات إضافية على LB + RS.","↑/↓ share one beat-the-man move, ←/→ share one escape move, plus 4 different LB + RS skills.")));
 
         var grid=Row(2,350);
         grid.Controls.Add(BuildMappingCard(false));
@@ -2097,18 +2123,83 @@ public sealed class MainForm : Form
 
         layout.Controls.Add(BigLabel(lb
             ? T("LB + RS — 4 مهارات إضافية","LB + RS — 4 SECONDARY SKILLS")
-            : T("RS — 4 مهارات سريعة","RS — 4 CORE / META SKILLS")),0,0);
+            : T("RS — مهارتان أساسيتان سهلتان","RS — 2 EASY CORE MOVES")),0,0);
 
-        var table=new TableLayoutPanel{
+        if (!lb)
+        {
+            var table=new TableLayoutPanel{
+                Dock=DockStyle.Fill,
+                ColumnCount=2,
+                RowCount=2,
+                Padding=new Padding(0,18,0,18),
+                RightToLeft=RightToLeft.No
+            };
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,125));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+            for(int r=0;r<2;r++) table.RowStyles.Add(new RowStyle(SizeType.Percent,50));
+
+            string[] keys={"RS_UP","RS_RIGHT"};
+            string[] pairedKeys={"RS_DOWN","RS_LEFT"};
+            string[] labels={"RS ↑ / ↓","RS ← / →"};
+
+            for(int i=0;i<2;i++)
+            {
+                string key=keys[i];
+                string pair=pairedKeys[i];
+
+                table.Controls.Add(new Label{
+                    Text=labels[i],
+                    Dock=DockStyle.Fill,
+                    ForeColor=_text,
+                    Font=new Font("Segoe UI Semibold",11,FontStyle.Bold),
+                    TextAlign=ContentAlignment.MiddleCenter,
+                    RightToLeft=RightToLeft.No
+                },0,i);
+
+                var cb=new ComboBox{
+                    Dock=DockStyle.Fill,
+                    DropDownStyle=ComboBoxStyle.DropDownList,
+                    BackColor=_panel2,
+                    ForeColor=_text,
+                    FlatStyle=FlatStyle.Flat,
+                    IntegralHeight=false,
+                    DropDownHeight=260
+                };
+                cb.Items.AddRange(SkillLibrary.Skills.Cast<object>().ToArray());
+
+                var fallback=AppConfig.DefaultAttackSkillMap()[key];
+                var currentName=_cfg.SkillMap.TryGetValue(key,out var n)?n:fallback;
+                var current=SkillLibrary.Skills.FirstOrDefault(x=>x.Name==currentName) ?? SkillLibrary.Get(fallback);
+                cb.SelectedItem=current;
+
+                cb.SelectedIndexChanged+=(_,_)=>
+                {
+                    if(cb.SelectedItem is not SkillDef sd) return;
+                    _cfg.SkillMap[key]=sd.Name;
+                    _cfg.SkillMap[pair]=sd.Name;
+                    _cfg.NormalizeAttackOnly();
+                    _cfg.Save();
+                    _engine.UpdateConfig(_cfg);
+                    current=sd;
+                };
+                table.Controls.Add(cb,1,i);
+            }
+
+            layout.Controls.Add(table,0,1);
+            p.Controls.Add(layout);
+            return p;
+        }
+
+        var secondary=new TableLayoutPanel{
             Dock=DockStyle.Fill,
             ColumnCount=2,
             RowCount=4,
             Padding=new Padding(0,6,0,0),
             RightToLeft=RightToLeft.No
         };
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,105));
-        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        for(int r=0;r<4;r++) table.RowStyles.Add(new RowStyle(SizeType.Percent,25));
+        secondary.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,105));
+        secondary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        for(int r=0;r<4;r++) secondary.RowStyles.Add(new RowStyle(SizeType.Percent,25));
 
         string[] dirs={"UP","RIGHT","LEFT","DOWN"};
         string[] arrows={"↑","→","←","↓"};
@@ -2116,16 +2207,15 @@ public sealed class MainForm : Form
 
         for(int i=0;i<4;i++)
         {
-            string key=(lb?"LB_RS_":"RS_")+dirs[i];
-            var label=new Label{
-                Text=(lb?"LB + ":"")+"RS "+arrows[i],
+            string key="LB_RS_"+dirs[i];
+            secondary.Controls.Add(new Label{
+                Text="LB + RS "+arrows[i],
                 Dock=DockStyle.Fill,
                 ForeColor=_text,
                 Font=new Font("Segoe UI Semibold",10,FontStyle.Bold),
                 TextAlign=ContentAlignment.MiddleCenter,
                 RightToLeft=RightToLeft.No
-            };
-            table.Controls.Add(label,0,i);
+            },0,i);
 
             var cb=new ComboBox{
                 Dock=DockStyle.Fill,
@@ -2148,13 +2238,13 @@ public sealed class MainForm : Form
                 if(cb.SelectedItem is not SkillDef sd) return;
 
                 var duplicate=_cfg.SkillMap
-                    .Where(kv=>kv.Key!=key)
+                    .Where(kv=>kv.Key.StartsWith("LB_RS_",StringComparison.OrdinalIgnoreCase) && kv.Key!=key)
                     .Any(kv=>kv.Value.Equals(sd.Name,StringComparison.OrdinalIgnoreCase));
 
                 if(duplicate)
                 {
                     MessageBox.Show(
-                        T("كل اتجاه من الثمانية لازم تكون له مهارة مختلفة.","All eight shortcuts must use different skills."),
+                        T("مهارات LB + RS الأربع لازم تكون مختلفة.","The four LB + RS skills must be different."),
                         "FC27 Assist",MessageBoxButtons.OK,MessageBoxIcon.Information);
                     cb.SelectedItem=current;
                     return;
@@ -2166,10 +2256,10 @@ public sealed class MainForm : Form
                 _engine.UpdateConfig(_cfg);
                 current=sd;
             };
-            table.Controls.Add(cb,1,i);
+            secondary.Controls.Add(cb,1,i);
         }
 
-        layout.Controls.Add(table,0,1);
+        layout.Controls.Add(secondary,0,1);
         p.Controls.Add(layout);
         return p;
     }
