@@ -300,6 +300,64 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
+    public void NormalShotUsesTwoBarPowerCapAndReleasesB()
+    {
+        var cfg = new AppConfig
+        {
+            DirtyMeta = true,
+            BTapThresholdMs = 100,
+            BNormalShotCapMs = 340
+        };
+        cfg.NormalizeAttackOnly();
+        using var e = Engine(cfg);
+
+        e.ProcessFrameForTest(Pad(XButtons.B, lx:12000, ly:18000), cfg);
+        Thread.Sleep(120);
+        e.ProcessFrameForTest(Pad(XButtons.B, lx:12000, ly:18000), cfg);
+
+        // Release physical B; app may finish the calibrated charge.
+        var release = e.ProcessFrameForTest(Pad(lx:12000, ly:18000), cfg);
+        Assert.True(Has(release, XButtons.B));
+
+        Thread.Sleep(240);
+        var capped = e.ProcessFrameForTest(Pad(lx:12000, ly:18000), cfg);
+        Assert.False(Has(capped, XButtons.B));
+    }
+
+    [Fact]
+    public void NormalShotAimStrengthPreservesUsersExactAngle()
+    {
+        var cfg = new AppConfig
+        {
+            DirtyMeta = true,
+            BTapThresholdMs = 80,
+            BNormalShotCapMs = 340,
+            NormalShotAimMinMagnitude = 23000
+        };
+        cfg.NormalizeAttackOnly();
+        using var e = Engine(cfg);
+
+        short lx = 6000, ly = 9000;
+        e.ProcessFrameForTest(Pad(XButtons.B, lx:lx, ly:ly), cfg);
+        Thread.Sleep(100);
+        e.ProcessFrameForTest(Pad(XButtons.B, lx:lx, ly:ly), cfg);
+
+        var r = e.ProcessFrameForTest(Pad(lx:lx, ly:ly), cfg);
+
+        double inputAngle = Math.Atan2(lx, ly);
+        double outputAngle = Math.Atan2(r.LX, r.LY);
+        double diff = Math.Abs(inputAngle - outputAngle);
+        if (diff > Math.PI) diff = Math.Abs(diff - Math.PI * 2);
+
+        double inputMag = Math.Sqrt((double)lx*lx + (double)ly*ly);
+        double outputMag = Math.Sqrt((double)r.LX*r.LX + (double)r.LY*r.LY);
+
+        Assert.InRange(diff, 0, 0.01);
+        Assert.True(outputMag >= inputMag);
+        Assert.InRange(outputMag, 22500, 23500);
+    }
+
+    [Fact]
     public void ShotAutomationStripsShoulderShotModifiers()
     {
         var cfg = new AppConfig();
