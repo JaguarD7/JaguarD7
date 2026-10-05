@@ -144,6 +144,7 @@ public class PrecisionTests
     [Fact]
     public void AutoPressIsBlockedByDefensiveManualActions()
     {
+        Assert.True(ConflictRules.BlockAutoPress((ushort)XButtons.A, false));
         Assert.True(ConflictRules.BlockAutoPress((ushort)XButtons.B, false));
         Assert.True(ConflictRules.BlockAutoPress((ushort)XButtons.X, false));
         Assert.True(ConflictRules.BlockAutoPress((ushort)XButtons.Y, false));
