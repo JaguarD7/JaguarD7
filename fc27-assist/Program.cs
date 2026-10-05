@@ -358,13 +358,13 @@ public sealed class MacroRunner
         double baseAngle = d switch
         {
             Dir.Forward => 0,
-            Dir.ForwardRight => -Math.PI / 4,
-            Dir.Right => -Math.PI / 2,
-            Dir.BackRight => -3 * Math.PI / 4,
+            Dir.ForwardRight => Math.PI / 4,
+            Dir.Right => Math.PI / 2,
+            Dir.BackRight => 3 * Math.PI / 4,
             Dir.Back => Math.PI,
-            Dir.BackLeft => 3 * Math.PI / 4,
-            Dir.Left => Math.PI / 2,
-            Dir.ForwardLeft => Math.PI / 4,
+            Dir.BackLeft => -3 * Math.PI / 4,
+            Dir.Left => -Math.PI / 2,
+            Dir.ForwardLeft => -Math.PI / 4,
             _ => 0
         };
         var a = facing + baseAngle;
@@ -427,6 +427,8 @@ public sealed class ControllerEngine : IDisposable
     private bool _prevLtModePressed;
     private double _lastPhysicalRsMagnitude;
     private ushort _blockedUntilReleaseMask;
+    private bool _blockLtUntilRelease;
+    private bool _blockDefenseRsUntilCenter;
     private long _defensePressBlockUntil;
     private double _prevRsMagnitude;
 
@@ -461,7 +463,13 @@ public sealed class ControllerEngine : IDisposable
         // This avoids accidentally reading our own ViGEm output if XInput ordering changes.
         _physicalSlot = ResolvePhysicalSlot(_cfg.ControllerSlot);
         if (_physicalSlot < 0)
-            Error = "No physical Xbox controller detected before virtual controller startup.";
+        {
+            Error = "No physical Xbox controller detected. Connect the wired controller, then restart FC27 Assist.";
+            _vigemReady = false;
+            _controllerConnected = false;
+            StatusChanged?.Invoke();
+            return;
+        }
 
         try
         {
@@ -469,9 +477,12 @@ public sealed class ControllerEngine : IDisposable
             _virtual = _client.CreateXbox360Controller();
             _virtual.Connect();
             var t = _virtual.GetType();
-            t.GetProperty("AutoSubmitReport")?.SetValue(_virtual, false);
             var m = t.GetMethod("SubmitReport");
-            if (m != null) _submit = (Action)Delegate.CreateDelegate(typeof(Action), _virtual, m);
+            if (m is null)
+                throw new MissingMethodException("ViGEm Xbox360Controller.SubmitReport was not found.");
+
+            t.GetProperty("AutoSubmitReport")?.SetValue(_virtual, false);
+            _submit = (Action)Delegate.CreateDelegate(typeof(Action), _virtual, m);
             _vigemReady = true;
         }
         catch (Exception ex)
@@ -540,6 +551,8 @@ public sealed class ControllerEngine : IDisposable
                 _lbRawPassed = false;
                 _lastPhysicalRsMagnitude = 0;
                 _blockedUntilReleaseMask = 0;
+                _blockLtUntilRelease = false;
+                _blockDefenseRsUntilCenter = false;
                 _bActive = false;
                 _lowDrivenTail = false;
                 _pressOn = false;
@@ -591,7 +604,9 @@ public sealed class ControllerEngine : IDisposable
         // Mode changes are edge-triggered: one transition only.
         if (ltModePressed && !_prevLtModePressed && Mode != PlayMode.Defense)
         {
-            _blockedUntilReleaseMask |= (ushort)(p.Buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y));
+            _blockedUntilReleaseMask |= (ushort)(p.Buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y | XButtons.LeftShoulder | XButtons.RightShoulder));
+            var currentRsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
+            _blockDefenseRsUntilCenter = currentRsMag >= cfg.RsReleaseDeadzone;
             SetMode(PlayMode.Defense);
         }
 
@@ -603,7 +618,8 @@ public sealed class ControllerEngine : IDisposable
             _lbModeTransitionConsumed = Mode != PlayMode.Attack;
             if (_lbModeTransitionConsumed)
             {
-                _blockedUntilReleaseMask |= (ushort)(p.Buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y));
+                _blockedUntilReleaseMask |= (ushort)(p.Buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y | XButtons.RightShoulder));
+                _blockLtUntilRelease = p.LeftTrigger >= 28;
                 bool rsWasAlreadyHeld = _lastPhysicalRsMagnitude >= cfg.RsReleaseDeadzone;
                 SetMode(PlayMode.Attack);
                 _rsLatched = rsWasAlreadyHeld;
@@ -624,10 +640,27 @@ public sealed class ControllerEngine : IDisposable
 
         _prevLtModePressed = ltModePressed;
 
-        // Any face button held while changing mode stays inert until physically released.
+        // Inputs carried from the previous mode stay inert until physically released.
         _blockedUntilReleaseMask = (ushort)(_blockedUntilReleaseMask & p.Buttons);
+        if (_blockLtUntilRelease && p.LeftTrigger < 20)
+            _blockLtUntilRelease = false;
+
         var effectiveP = p;
         effectiveP.Buttons = (ushort)(p.Buttons & ~_blockedUntilReleaseMask);
+        if (_blockLtUntilRelease)
+            effectiveP.LeftTrigger = 0;
+
+        if (_blockDefenseRsUntilCenter)
+        {
+            var qMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
+            if (qMag < cfg.RsReleaseDeadzone)
+                _blockDefenseRsUntilCenter = false;
+            else
+            {
+                effectiveP.ThumbRX = 0;
+                effectiveP.ThumbRY = 0;
+            }
+        }
 
         UpdateFacing(effectiveP);
         var r = new VirtualReport
@@ -666,6 +699,8 @@ public sealed class ControllerEngine : IDisposable
         _lbRawPassed = false;
         _lastPhysicalRsMagnitude = 0;
         _blockedUntilReleaseMask = 0;
+        _blockLtUntilRelease = false;
+        _blockDefenseRsUntilCenter = false;
         _bActive = false;
         _bNormalMode = false;
         _bCapped = false;
