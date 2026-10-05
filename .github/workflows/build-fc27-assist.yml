@@ -12,7 +12,7 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     env:
       VGAMEPAD_SKIP_VIGEMBUS_INSTALL: 'true'
 
@@ -24,7 +24,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
       - name: Reconstruct and verify source
         shell: pwsh
@@ -48,12 +47,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path src | Out-Null
           Expand-Archive -Path 'fc27-source.zip' -DestinationPath src -Force
 
-      - name: Install dependencies
+      - name: Install build dependencies
         shell: pwsh
         working-directory: src
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install customtkinter==5.2.2 pyinstaller==6.16.0
+          python -m pip install "vgamepad @ git+https://github.com/yannbouteiller/vgamepad.git@main"
 
       - name: Compile and engine tests
         shell: pwsh
@@ -68,7 +68,8 @@ jobs:
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name FC27-Controller-Assist --collect-all customtkinter --collect-all vgamepad app.py
           if (-not (Test-Path 'dist/FC27-Controller-Assist.exe')) { throw 'EXE was not created' }
-          Get-FileHash 'dist/FC27-Controller-Assist.exe' -Algorithm SHA256
+          $hash = (Get-FileHash 'dist/FC27-Controller-Assist.exe' -Algorithm SHA256).Hash
+          Write-Host "EXE SHA256: $hash"
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
