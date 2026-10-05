@@ -190,6 +190,7 @@ public sealed class AppConfig
 
     public void NormalizeAttackOnly()
     {
+        // One system only: Dirty System. It can be enabled/disabled from the app button.
         AutoPress = false;
         SprintJockeyAssist = false;
         HardTackleAssist = false;
@@ -1803,8 +1804,6 @@ public sealed class MainForm : Form
     private readonly Label _latencyBadge = new();
     private readonly Label _singleBadge = new();
     private readonly Button _langBtn = new();
-    private const int WM_HOTKEY = 0x0312;
-    private const int DIRTY_HOTKEY_ID = 0xFC27;
     private SingleControllerState _singleController = new(
         false, false, false, false, false, false,
         "Checking Single Controller Mode...", 0, 0);
@@ -1820,33 +1819,6 @@ public sealed class MainForm : Form
 
     private bool Ar => _cfg.Language == "ar";
     private string T(string ar, string en) => Ar ? ar : en;
-
-    [DllImport("user32.dll")]
-    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-    [DllImport("user32.dll")]
-    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        RegisterHotKey(Handle, DIRTY_HOTKEY_ID, 0, (uint)Keys.F6);
-    }
-
-    protected override void OnHandleDestroyed(EventArgs e)
-    {
-        try { UnregisterHotKey(Handle, DIRTY_HOTKEY_ID); } catch { }
-        base.OnHandleDestroyed(e);
-    }
-
-    protected override void WndProc(ref Message m)
-    {
-        if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == DIRTY_HOTKEY_ID)
-        {
-            ToggleDirtySystem();
-            return;
-        }
-        base.WndProc(ref m);
-    }
 
     public MainForm()
     {
@@ -2015,29 +1987,30 @@ public sealed class MainForm : Form
         var root=Stack(); root.Controls.Add(Title(T("FC27 Assist — لوحة التحكم","FC27 Assist — Control Center"),T("وضع هجوم فقط لتقليل التعارضات والحفاظ على حركة اليد الطبيعية.","Attack-only mode to minimize conflicts while keeping native movement controls.")));
         var row=Row(3,190);
         row.Controls.Add(Card(T("الوضع الحالي","CURRENT MODE"), T("هجوم فقط ⚡","ATTACK ONLY ⚡"), T("LT / RT / LS تعمل طبيعي","LT / RT / LS stay native")));
-        row.Controls.Add(Card(T("النظام القذر","DIRTY SYSTEM"), _cfg.DirtyMeta?T("شغال ⚡","ON ⚡"):T("مطفأ","OFF"), _cfg.DirtyMeta?T("كل المساعدات فعالة","All assists active"):T("Raw 1:1 بدون تدخل","Raw 1:1 passthrough")));
+        row.Controls.Add(Card(T("النظام القذر","DIRTY SYSTEM"), _cfg.DirtyMeta?T("شغال ⚡","ON ⚡"):T("مطفأ","OFF"), _cfg.DirtyMeta?T("كل مزايا التطبيق فعالة","All app features active"):T("النظام متوقف بالكامل","System fully disabled")));
         row.Controls.Add(Card(T("محرك اليد","CONTROLLER ENGINE"), _singleController.Ready ? T("يد واحدة","ONE CONTROLLER") : T("إعداد مطلوب","SETUP REQUIRED"), _singleController.Message));
         root.Controls.Add(row);
 
-        var dirty=PanelCard(220);
+        var dirty=PanelCard(205);
         var dirtyLayout=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=2};
         dirtyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,68));
         dirtyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,32));
         dirtyLayout.RowStyles.Add(new RowStyle(SizeType.Absolute,46));
         dirtyLayout.RowStyles.Add(new RowStyle(SizeType.Percent,100));
-        dirtyLayout.Controls.Add(BigLabel(T("DIRTY SYSTEM — المفتاح الرئيسي","DIRTY SYSTEM — MASTER SWITCH")),0,0);
+        dirtyLayout.Controls.Add(BigLabel(T("النظام القذر","DIRTY SYSTEM")),0,0);
+
         var dirtyDesc=new Label{
             Dock=DockStyle.Fill,
             ForeColor=_muted,
             Padding=new Padding(0,8,10,0),
             Text=T(
-                "ON: 8 مهارات + Fast Pass Pulse + Precision Shot + Explosive Exit + Fast Chaining.\nOFF: اليد تمر Raw 1:1 بدون أي تعديل من البرنامج.\nF6 يشغل/يطفي النظام كامل.",
-                "ON: 8 skills + Fast Pass Pulse + Precision Shot + Explosive Exit + Fast Chaining.\nOFF: strict raw 1:1 controller passthrough.\nF6 toggles the whole system.")
+                "هذا هو النظام الوحيد في التطبيق.\nشغال: 8 مهارات + الشوت المحسن + Pass Pulse + Explosive Exit + Fast Chaining.\nمطفأ: يتوقف كل تدخل من التطبيق وتبقى اليد طبيعية.",
+                "This is the app's only system.\nON: 8 skills + improved shooting + Pass Pulse + Explosive Exit + Fast Chaining.\nOFF: all app input modifications stop and the controller stays native.")
         };
         dirtyLayout.Controls.Add(dirtyDesc,0,1);
 
         var master=new Button{
-            Text=_cfg.DirtyMeta?T("إطفاء النظام القذر","TURN DIRTY OFF"):T("تشغيل النظام القذر","TURN DIRTY ON"),
+            Text=_cfg.DirtyMeta?T("إطفاء النظام","TURN SYSTEM OFF"):T("تشغيل النظام","TURN SYSTEM ON"),
             Dock=DockStyle.Fill,
             Margin=new Padding(12,6,0,6)
         };
@@ -2283,7 +2256,7 @@ public sealed class MainForm : Form
     private void UpdateStatus()
     {
         if (IsDisposed) return;
-        _modeBadge.Text=_cfg.DirtyMeta?T("⚡ قذر ON","⚡ DIRTY ON"):T("○ قذر OFF","○ DIRTY OFF");
+        _modeBadge.Text=_cfg.DirtyMeta?T("⚡ النظام شغال","⚡ SYSTEM ON"):T("○ النظام مطفأ","○ SYSTEM OFF");
         _modeBadge.ForeColor=_cfg.DirtyMeta?_accent:_muted;
         bool physicalOk = ProbePhysicalController(out var physicalSlot, out var physicalPad);
         _controllerBadge.Text=physicalOk?T($"● اليد متصلة S{physicalSlot}","● Physical OK S"+physicalSlot):T("○ اليد غير متصلة","○ Physical Lost");
