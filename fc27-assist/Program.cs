@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
+using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Nefarius.ViGEm.Client;
 using Nefarius.ViGEm.Client.Targets;
@@ -430,6 +433,110 @@ public static class ConflictRules
 }
 
 
+public sealed record UpdateManifest(string Version, string Url, string Sha256, string Commit);
+
+public static class AutoUpdater
+{
+    public const string ManifestUrl = "https://raw.githubusercontent.com/JaguarD7/JaguarD7/fc27-assist-dist/version.json";
+    public static string CurrentVersion =>
+        Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+
+    public static bool IsNewer(string latest, string current)
+        => Version.TryParse(latest, out var l) && Version.TryParse(current, out var c) && l > c;
+
+    public static async Task<bool> CheckAndApplyAsync(IWin32Window owner, bool interactive)
+    {
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("FC27Assist-Updater/1.0");
+
+            var manifestJson = await http.GetStringAsync(ManifestUrl);
+            var manifest = JsonSerializer.Deserialize<UpdateManifest>(manifestJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (manifest is null || string.IsNullOrWhiteSpace(manifest.Version) ||
+                string.IsNullOrWhiteSpace(manifest.Url) || string.IsNullOrWhiteSpace(manifest.Sha256))
+                throw new InvalidDataException("Update manifest is invalid.");
+
+            if (!IsNewer(manifest.Version, CurrentVersion))
+            {
+                if (interactive)
+                    MessageBox.Show($"أنت على آخر إصدار ({CurrentVersion}).", "FC27 Assist Update",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+
+            var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "FC27AssistUpdate_" + Guid.NewGuid().ToString("N"));
+            var zipPath = System.IO.Path.Combine(root, "update.zip");
+            var extract = System.IO.Path.Combine(root, "package");
+            Directory.CreateDirectory(root);
+
+            using (var response = await http.GetAsync(manifest.Url, HttpCompletionOption.ResponseHeadersRead))
+            {
+                response.EnsureSuccessStatusCode();
+                await using var src = await response.Content.ReadAsStreamAsync();
+                await using var dst = File.Create(zipPath);
+                await src.CopyToAsync(dst);
+            }
+
+            var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(zipPath)));
+            if (!hash.Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Update SHA-256 verification failed.");
+
+            ZipFile.ExtractToDirectory(zipPath, extract, true);
+            var newExe = System.IO.Path.Combine(extract, "FC27Assist.exe");
+            if (!File.Exists(newExe))
+                throw new FileNotFoundException("Updated FC27Assist.exe was not found in the package.");
+
+            string target = AppContext.BaseDirectory.TrimEnd(System.IO.Path.DirectorySeparatorChar);
+            string script = System.IO.Path.Combine(root, "apply-update.ps1");
+            string targetExe = System.IO.Path.Combine(target, "FC27Assist.exe");
+            int pid = Environment.ProcessId;
+
+            static string Ps(string value) => "'" + value.Replace("'", "''") + "'";
+            File.WriteAllText(script, $"""
+$ErrorActionPreference = 'Stop'
+$pidToWait = {pid}
+$source = {Ps(extract)}
+$target = {Ps(target)}
+$targetExe = {Ps(targetExe)}
+$log = Join-Path $env:APPDATA 'FC27Assist\update.log'
+try {{
+    while (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 250 }}
+    Start-Sleep -Milliseconds 300
+    Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
+    Start-Process -FilePath $targetExe
+}} catch {{
+    New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
+    Add-Content -Path $log -Value "[$(Get-Date)] $($_.Exception.ToString())"
+}}
+""");
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{script}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            MessageBox.Show(
+                $"تم العثور على تحديث {manifest.Version}. سيتم تثبيته الآن وإعادة فتح البرنامج تلقائيًا.",
+                "FC27 Assist Update", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            CrashLogger.Log(ex);
+            if (interactive)
+                MessageBox.Show("تعذر فحص/تثبيت التحديث:\n" + ex.Message,
+                    "FC27 Assist Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+    }
+}
+
 public sealed record SingleControllerState(
     bool HidHideInstalled,
     bool AppWhitelisted,
@@ -458,7 +565,29 @@ public static class HidHideManager
 
     private sealed record GamingGroup(string FriendlyName, List<string> Paths);
 
-    public static string? FindCli() => CliCandidates.FirstOrDefault(File.Exists);
+    public static string? FindCli()
+    {
+        var exact = CliCandidates.FirstOrDefault(File.Exists);
+        if (exact is not null) return exact;
+
+        foreach (var root in new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+        }.Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x)))
+        {
+            try
+            {
+                foreach (var vendorDir in Directory.EnumerateDirectories(root, "Nefarius*"))
+                {
+                    var found = Directory.EnumerateFiles(vendorDir, "HidHideCLI.exe", SearchOption.AllDirectories).FirstOrDefault();
+                    if (found is not null) return found;
+                }
+            }
+            catch { }
+        }
+        return null;
+    }
 
     private static CliResult Run(string cli, params string[] args)
     {
@@ -590,42 +719,53 @@ public static class HidHideManager
             if (matches.Count == 1) target = matches[0];
         }
 
-        if (target is null)
+        bool changed = false;
+        if (target is not null)
+        {
+            foreach (var devicePath in target.Paths)
+            {
+                if (hidden.Contains(devicePath)) continue;
+                var hide = Run(cli, "--dev-hide", devicePath);
+                if (!hide.Success)
+                    return new(true, appRegistered, false, false, false, false,
+                        "HidHide could not hide the physical controller: " + hide.Combined, groups.Count, hidden.Count);
+                hidden.Add(devicePath);
+                changed = true;
+            }
+        }
+        else if (groups.Count > 1 && hidden.Count == 0)
         {
             return new(true, appRegistered, false, false, false, false,
-                groups.Count == 0
-                    ? "No physical gaming controller was detected before virtual-controller startup."
-                    : "More than one physical gaming controller is connected. Disconnect the extras once, then restart FC27Assist.",
+                "More than one physical gaming controller is connected. Disconnect the extras once, then rescan.",
                 groups.Count, hidden.Count);
-        }
-
-        bool changed = false;
-        foreach (var devicePath in target.Paths)
-        {
-            if (hidden.Contains(devicePath)) continue;
-            var hide = Run(cli, "--dev-hide", devicePath);
-            if (!hide.Success)
-                return new(true, appRegistered, false, false, false, false,
-                    "HidHide could not hide the physical controller: " + hide.Combined, groups.Count, hidden.Count);
-            hidden.Add(devicePath);
-            changed = true;
         }
 
         var cloak = Run(cli, "--cloak-on");
         if (!cloak.Success)
-            return new(true, appRegistered, false, true, changed, false,
+            return new(true, appRegistered, false, hidden.Count > 0, changed, false,
                 "HidHide could not enable device cloaking: " + cloak.Combined, groups.Count, hidden.Count);
 
         var cloakState = Run(cli, "--cloak-state");
         bool cloakOn = cloakState.Success && cloakState.StdOut.Contains("--cloak-on", StringComparison.OrdinalIgnoreCase);
-        bool deviceHidden = target.Paths.All(hidden.Contains);
-        bool ready = appRegistered && cloakOn && deviceHidden && !changed;
+        bool deviceHidden = target is not null ? target.Paths.All(hidden.Contains) : hidden.Count > 0;
+
+        int xinputSlot = -1;
+        for (int i = 0; i < 4; i++)
+        {
+            if (XInputNative.TryGetState(i, out _)) { xinputSlot = i; break; }
+        }
+
+        bool ready = appRegistered && cloakOn && deviceHidden && !changed && xinputSlot >= 0;
 
         string message = changed
-            ? "Single Controller Mode was configured. Unplug/replug the wired controller once, then restart FC27Assist."
+            ? "Single Controller Mode configured. Unplug/replug the wired controller once; FC27Assist will rescan automatically."
             : ready
-                ? "Single Controller Mode ready: FC27 should see only the virtual controller."
-                : "Single Controller Mode is not fully ready.";
+                ? $"Single Controller Mode ready. Physical controller detected on XInput slot {xinputSlot}."
+                : xinputSlot < 0 && deviceHidden
+                    ? "Controller is hidden correctly, but FC27Assist cannot read it yet. Reconnect the USB cable; auto-rescan is active."
+                    : groups.Count == 0 && hidden.Count == 0
+                        ? "No physical Xbox-compatible controller detected."
+                        : "Single Controller Mode is not fully ready.";
 
         return new(true, appRegistered, cloakOn, deviceHidden, changed, ready, message, groups.Count, hidden.Count);
     }
