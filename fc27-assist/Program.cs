@@ -331,7 +331,7 @@ public static class ConflictRules
         => (buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y)) != 0;
 
     public static bool BlockAutoPress(ushort buttons, bool rsSwitchIntent)
-        => rsSwitchIntent || (buttons & (ushort)(XButtons.B | XButtons.X | XButtons.Y)) != 0;
+        => rsSwitchIntent || (buttons & (ushort)(XButtons.A | XButtons.B | XButtons.X | XButtons.Y)) != 0;
 
     public static bool ShotOwnsModifiers(bool bActive, bool lowDrivenTail)
         => bActive || lowDrivenTail;
@@ -438,6 +438,8 @@ public sealed class ControllerEngine : IDisposable
         _fidgetSnapUntil = 0;
         _pressOn = false;
         _pressPhaseStart = 0;
+        _prevRsMagnitude = 0;
+        _defensePressBlockUntil = 0;
         LastAction = mode == PlayMode.Attack ? "ATTACK MODE" : "DEFENSE MODE";
         StatusChanged?.Invoke();
     }
@@ -457,6 +459,12 @@ public sealed class ControllerEngine : IDisposable
                 _prevLtModePressed = false;
                 _rsLatched = false;
                 _prevRsMagnitude = 0;
+                _lbChordConsumed = false;
+                _lbModeTransitionConsumed = false;
+                _bActive = false;
+                _lowDrivenTail = false;
+                _pressOn = false;
+                _pressPhaseStart = 0;
                 _macro.Cancel();
                 Thread.Sleep(8);
                 continue;
@@ -745,7 +753,7 @@ public sealed class ControllerEngine : IDisposable
         bool rsSwitchIntent = rsMag > 14500 && _prevRsMagnitude <= 14500;
         _prevRsMagnitude = rsMag;
 
-        bool tackleOrKeeper = Btn(p.Buttons, XButtons.B) || Btn(p.Buttons, XButtons.X) || Btn(p.Buttons, XButtons.Y);
+        bool tackleOrKeeper = Btn(p.Buttons, XButtons.A) || Btn(p.Buttons, XButtons.B) || Btn(p.Buttons, XButtons.X) || Btn(p.Buttons, XButtons.Y);
         bool conflictBlock = ConflictRules.BlockAutoPress(p.Buttons, rsSwitchIntent);
         if (conflictBlock)
         {
