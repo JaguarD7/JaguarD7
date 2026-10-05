@@ -109,7 +109,12 @@ public class PlayLikeSimulationTests
         var rightAction = e.LastAction;
         Assert.Contains("RIGHT", rightAction);
 
-        e.ProcessFrameForTest(Pad(), cfg);
+        // Let the first macro fully complete while RS is centered, then re-arm.
+        for (int i = 0; i < 8; i++)
+        {
+            e.ProcessFrameForTest(Pad(), cfg);
+            Thread.Sleep(25);
+        }
         Thread.Sleep(cfg.RsRearmMs + 15);
         e.ProcessFrameForTest(Pad(), cfg);
         Thread.Sleep(70);
