@@ -555,48 +555,93 @@ public sealed class ControllerEngine : IDisposable
     {
         bool b = Btn(p.Buttons, XButtons.B);
         bool bRise = Rising(p.Buttons, _prevButtons, XButtons.B);
+
         if (bRise)
         {
-            _bActive = true; _bCapped = false; _bStart = Stopwatch.GetTimestamp();
+            _bActive = true;
+            _bCapped = false;
+            _bNormalMode = false;
+            _bStart = Stopwatch.GetTimestamp();
             _lowDrivenTail = false;
         }
+
+        // Attack-mode B is fully owned by the shot state machine.
+        r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.B);
+
         if (_bActive)
         {
-            r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.B);
             var held = MsSince(_bStart);
-            if (b && !_bCapped && held < cfg.BNormalShotCapMs)
+
+            // If B is still physically held past the tap threshold, this is a normal shot.
+            if (!_bNormalMode && b && held > cfg.BTapThresholdMs)
             {
-                r.Buttons |= (ushort)XButtons.B;
+                _bNormalMode = true;
+                LastAction = "Normal Strong Shot";
             }
-            else if (b && held >= cfg.BNormalShotCapMs)
+
+            if (!_bNormalMode)
             {
-                _bCapped = true;
-            }
-            if (!b)
-            {
-                if (held <= cfg.BTapThresholdMs)
+                if (b)
                 {
-                    _lowDrivenTail = true; _lowDrivenTailPhase = 0; _lowDrivenPhaseStart = Stopwatch.GetTimestamp();
+                    // Keep the initial press continuous while intent is still undecided.
+                    r.Buttons |= (ushort)XButtons.B;
+                }
+                else
+                {
+                    // Quick release: finish a calibrated first-shot charge, then add the second tap.
+                    _bActive = false;
+                    _lowDrivenTail = true;
+                    _lowDrivenTailPhase = 0;
+                    _lowDrivenPhaseStart = Stopwatch.GetTimestamp();
                     LastAction = "Low Driven Shot";
                 }
-                else LastAction = "Normal Strong Shot";
-                _bActive = false;
+            }
+            else
+            {
+                // Normal shot: user chooses hold intent; app chooses the maximum power.
+                if (held < cfg.BNormalShotCapMs && !_bCapped)
+                    r.Buttons |= (ushort)XButtons.B;
+                else
+                    _bCapped = true;
+
+                if (!b || _bCapped)
+                    _bActive = false;
             }
         }
+
         if (_lowDrivenTail)
         {
-            r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.B);
-            var e = MsSince(_lowDrivenPhaseStart);
-            if (_lowDrivenTailPhase == 0 && e >= cfg.LowDrivenSecondTapGapMs)
+            var totalCharge = MsSince(_bStart);
+
+            if (_lowDrivenTailPhase == 0)
             {
-                _lowDrivenTailPhase = 1; _lowDrivenPhaseStart = Stopwatch.GetTimestamp();
+                if (totalCharge < cfg.LowDrivenChargeMs)
+                {
+                    // Continue the same first B press even though the user already released.
+                    r.Buttons |= (ushort)XButtons.B;
+                }
+                else
+                {
+                    _lowDrivenTailPhase = 1;
+                    _lowDrivenPhaseStart = Stopwatch.GetTimestamp();
+                }
             }
-            if (_lowDrivenTailPhase == 1)
+            else if (_lowDrivenTailPhase == 1)
+            {
+                // Required release gap between first charge and second B tap.
+                if (MsSince(_lowDrivenPhaseStart) >= cfg.LowDrivenSecondTapGapMs)
+                {
+                    _lowDrivenTailPhase = 2;
+                    _lowDrivenPhaseStart = Stopwatch.GetTimestamp();
+                }
+            }
+            else
             {
                 r.Buttons |= (ushort)XButtons.B;
                 if (MsSince(_lowDrivenPhaseStart) >= cfg.LowDrivenSecondTapMs)
                 {
                     _lowDrivenTail = false;
+                    _lowDrivenTailPhase = 0;
                 }
             }
         }
