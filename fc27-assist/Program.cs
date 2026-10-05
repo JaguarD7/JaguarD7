@@ -140,6 +140,7 @@ internal static class HighResolutionTimer
 
     public static void End()
     {
+        if (Volatile.Read(ref _active) <= 0) return;
         if (Interlocked.Decrement(ref _active) == 0)
             timeEndPeriod(1);
     }
