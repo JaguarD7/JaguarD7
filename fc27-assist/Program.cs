@@ -389,6 +389,201 @@ public static class ConflictRules
         => bActive || lowDrivenTail;
 }
 
+
+public sealed record SingleControllerState(
+    bool HidHideInstalled,
+    bool AppWhitelisted,
+    bool CloakOn,
+    bool DeviceHidden,
+    bool RequiresReconnect,
+    bool Ready,
+    string Message,
+    int GamingGroups,
+    int HiddenDevices);
+
+public static class HidHideManager
+{
+    private static readonly string[] CliCandidates =
+    {
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nefarius Software Solutions", "HidHide", "x64", "HidHideCLI.exe"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nefarius Software Solutions e.U.", "HidHideCLI", "HidHideCLI.exe"),
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nefarius Software Solutions e.U", "HidHide", "x64", "HidHideCLI.exe")
+    };
+
+    private sealed record CliResult(int ExitCode, string StdOut, string StdErr)
+    {
+        public bool Success => ExitCode == 0 && string.IsNullOrWhiteSpace(StdErr);
+        public string Combined => (StdOut + Environment.NewLine + StdErr).Trim();
+    }
+
+    private sealed record GamingGroup(string FriendlyName, List<string> Paths);
+
+    public static string? FindCli() => CliCandidates.FirstOrDefault(File.Exists);
+
+    private static CliResult Run(string cli, params string[] args)
+    {
+        try
+        {
+            using var p = new Process();
+            p.StartInfo = new ProcessStartInfo
+            {
+                FileName = cli,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            foreach (var arg in args) p.StartInfo.ArgumentList.Add(arg);
+            p.Start();
+            string stdout = p.StandardOutput.ReadToEnd();
+            string stderr = p.StandardError.ReadToEnd();
+            if (!p.WaitForExit(4000))
+            {
+                try { p.Kill(true); } catch { }
+                return new CliResult(-1, stdout, "HidHideCLI timed out.");
+            }
+            return new CliResult(p.ExitCode, stdout, stderr);
+        }
+        catch (Exception ex)
+        {
+            return new CliResult(-1, "", ex.Message);
+        }
+    }
+
+    private static List<GamingGroup> Gaming(string cli)
+    {
+        var result = Run(cli, "--dev-gaming");
+        if (!result.Success || string.IsNullOrWhiteSpace(result.StdOut))
+            return new();
+
+        try
+        {
+            using var doc = JsonDocument.Parse(result.StdOut);
+            var groups = new List<GamingGroup>();
+            foreach (var group in doc.RootElement.EnumerateArray())
+            {
+                string name = group.TryGetProperty("friendlyName", out var fn) ? fn.GetString() ?? "Controller" : "Controller";
+                var paths = new List<string>();
+                if (group.TryGetProperty("devices", out var devices))
+                {
+                    foreach (var device in devices.EnumerateArray())
+                    {
+                        bool present = device.TryGetProperty("present", out var pr) && pr.GetBoolean();
+                        bool gaming = device.TryGetProperty("gamingDevice", out var gd) && gd.GetBoolean();
+                        if (!present || !gaming) continue;
+                        if (device.TryGetProperty("deviceInstancePath", out var dp))
+                        {
+                            var value = dp.GetString();
+                            if (!string.IsNullOrWhiteSpace(value)) paths.Add(value);
+                        }
+                    }
+                }
+                if (paths.Count > 0)
+                    groups.Add(new GamingGroup(name, paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList()));
+            }
+            return groups;
+        }
+        catch
+        {
+            return new();
+        }
+    }
+
+    private static HashSet<string> Hidden(string cli)
+    {
+        var result = Run(cli, "--dev-list");
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!result.Success) return set;
+
+        foreach (var raw in result.StdOut.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            const string prefix = "--dev-hide \"";
+            if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !line.EndsWith("\"")) continue;
+            set.Add(line[prefix.Length..^1]);
+        }
+        return set;
+    }
+
+    public static SingleControllerState Prepare()
+    {
+        string? cli = FindCli();
+        if (cli is null)
+            return new(false, false, false, false, false, false,
+                "HidHide is not installed. Single Controller Mode is required so FC27 sees only one controller.", 0, 0);
+
+        string exe = Environment.ProcessPath ?? Application.ExecutablePath;
+        var appList = Run(cli, "--app-list");
+        bool appRegistered = appList.Success &&
+            appList.StdOut.Contains(exe, StringComparison.OrdinalIgnoreCase);
+
+        if (!appRegistered)
+        {
+            var reg = Run(cli, "--app-reg", exe);
+            if (!reg.Success)
+                return new(true, false, false, false, false, false,
+                    "HidHide could not whitelist FC27Assist: " + reg.Combined, 0, 0);
+            appRegistered = true;
+        }
+
+        // Normal cloak mode: hidden devices are invisible to every process except whitelisted apps.
+        Run(cli, "--inv-off");
+
+        var groups = Gaming(cli);
+        var hidden = Hidden(cli);
+
+        GamingGroup? target = null;
+        if (groups.Count == 1)
+        {
+            target = groups[0];
+        }
+        else if (groups.Count > 1)
+        {
+            var matches = groups.Where(g => g.Paths.Any(hidden.Contains)).ToList();
+            if (matches.Count == 1) target = matches[0];
+        }
+
+        if (target is null)
+        {
+            return new(true, appRegistered, false, false, false, false,
+                groups.Count == 0
+                    ? "No physical gaming controller was detected before virtual-controller startup."
+                    : "More than one physical gaming controller is connected. Disconnect the extras once, then restart FC27Assist.",
+                groups.Count, hidden.Count);
+        }
+
+        bool changed = false;
+        foreach (var devicePath in target.Paths)
+        {
+            if (hidden.Contains(devicePath)) continue;
+            var hide = Run(cli, "--dev-hide", devicePath);
+            if (!hide.Success)
+                return new(true, appRegistered, false, false, false, false,
+                    "HidHide could not hide the physical controller: " + hide.Combined, groups.Count, hidden.Count);
+            hidden.Add(devicePath);
+            changed = true;
+        }
+
+        var cloak = Run(cli, "--cloak-on");
+        if (!cloak.Success)
+            return new(true, appRegistered, false, true, changed, false,
+                "HidHide could not enable device cloaking: " + cloak.Combined, groups.Count, hidden.Count);
+
+        var cloakState = Run(cli, "--cloak-state");
+        bool cloakOn = cloakState.Success && cloakState.StdOut.Contains("--cloak-on", StringComparison.OrdinalIgnoreCase);
+        bool deviceHidden = target.Paths.All(hidden.Contains);
+        bool ready = appRegistered && cloakOn && deviceHidden && !changed;
+
+        string message = changed
+            ? "Single Controller Mode was configured. Unplug/replug the wired controller once, then restart FC27Assist."
+            : ready
+                ? "Single Controller Mode ready: FC27 should see only the virtual controller."
+                : "Single Controller Mode is not fully ready.";
+
+        return new(true, appRegistered, cloakOn, deviceHidden, changed, ready, message, groups.Count, hidden.Count);
+    }
+}
+
 public sealed class ControllerEngine : IDisposable
 {
     private readonly object _gate = new();
@@ -1047,7 +1242,9 @@ public sealed class MainForm : Form
     private readonly Label _controllerBadge = new();
     private readonly Label _vigemBadge = new();
     private readonly Label _latencyBadge = new();
+    private readonly Label _singleBadge = new();
     private readonly Button _langBtn = new();
+    private readonly SingleControllerState _singleController;
     private readonly Dictionary<string, Button> _nav = new();
     private string _page = "dashboard";
     private readonly Color _bg = Color.FromArgb(10,14,23);
@@ -1064,6 +1261,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _cfg = AppConfig.Load();
+        _singleController = HidHideManager.Prepare();
         Text = "FC27 Assist";
         MinimumSize = new Size(1060, 700);
         Size = new Size(1240, 780);
@@ -1076,7 +1274,16 @@ public sealed class MainForm : Form
         BuildShell();
         _engine = new ControllerEngine(_cfg);
         _engine.StatusChanged += () => { if (!IsDisposed) BeginInvoke(UpdateStatus); };
-        _engine.Start();
+
+        if (_singleController.Ready)
+            _engine.Start();
+        else
+            BeginInvoke(() => MessageBox.Show(
+                _singleController.Message,
+                "FC27 Assist — Single Controller Mode",
+                MessageBoxButtons.OK,
+                _singleController.HidHideInstalled ? MessageBoxIcon.Information : MessageBoxIcon.Warning));
+
         ShowPage("dashboard");
 
         _uiTimer = new System.Windows.Forms.Timer { Interval = 60 };
@@ -1108,6 +1315,7 @@ public sealed class MainForm : Form
         _langBtn.Dock=DockStyle.Right; _langBtn.Width=70; StyleButton(_langBtn,true); _langBtn.Click += (_,_) => ToggleLanguage();
         top.Controls.Add(_langBtn);
         _latencyBadge.Dock=DockStyle.Right; _latencyBadge.Width=112; StyleBadge(_latencyBadge); top.Controls.Add(_latencyBadge);
+        _singleBadge.Dock=DockStyle.Right; _singleBadge.Width=160; StyleBadge(_singleBadge); top.Controls.Add(_singleBadge);
         _vigemBadge.Dock=DockStyle.Right; _vigemBadge.Width=115; StyleBadge(_vigemBadge); top.Controls.Add(_vigemBadge);
         _controllerBadge.Dock=DockStyle.Right; _controllerBadge.Width=150; StyleBadge(_controllerBadge); top.Controls.Add(_controllerBadge);
         _modeBadge.Dock=DockStyle.Left; _modeBadge.Width=190; StyleBadge(_modeBadge); _modeBadge.Font=new Font("Segoe UI Semibold",11,FontStyle.Bold); top.Controls.Add(_modeBadge);
@@ -1143,7 +1351,7 @@ public sealed class MainForm : Form
         var row=Row(3,190);
         row.Controls.Add(Card(T("الوضع الحالي","CURRENT MODE"), _engine.Mode==PlayMode.Attack?T("هجوم ⚡","ATTACK ⚡"):T("دفاع ◆","DEFENSE ◆"), T("LB للهجوم • LT للدفاع","LB Attack • LT Defense")));
         row.Controls.Add(Card(T("Dirty Meta","DIRTY META"), _cfg.DirtyMeta?T("مفعّل","ENABLED"):T("متوقف","OFF"), T("مفتاح واحد لكل إضافات الميتا","One switch for the full meta layer")));
-        row.Controls.Add(Card(T("محرك اليد","CONTROLLER ENGINE"), _engine.Connected?T("متصل","CONNECTED"):T("غير متصل","DISCONNECTED"), T("XInput → Virtual Xbox","XInput → Virtual Xbox")));
+        row.Controls.Add(Card(T("محرك اليد","CONTROLLER ENGINE"), _singleController.Ready ? T("يد واحدة","ONE CONTROLLER") : T("إعداد مطلوب","SETUP REQUIRED"), _singleController.Message));
         root.Controls.Add(row);
 
         var dirty=PanelCard(210); var lbl=BigLabel(T("DIRTY META — الوضع القذر","DIRTY META — FULL LAYER")); dirty.Controls.Add(lbl);
@@ -1269,6 +1477,7 @@ public sealed class MainForm : Form
         _modeBadge.Text=_engine.Mode==PlayMode.Attack?T("⚡ وضع الهجوم","⚡ ATTACK MODE"):T("◆ وضع الدفاع","◆ DEFENSE MODE");_modeBadge.ForeColor=_engine.Mode==PlayMode.Attack?_accent:_cyan;
         _controllerBadge.Text=_engine.Connected?T("● اليد متصلة","● Controller OK"):T("○ اليد غير متصلة","○ Controller Lost");_controllerBadge.ForeColor=_engine.Connected?_accent:Color.OrangeRed;
         _vigemBadge.Text=_engine.ViGEmReady?"● ViGEm OK":"○ ViGEm";_vigemBadge.ForeColor=_engine.ViGEmReady?_accent:Color.OrangeRed;
+        _singleBadge.Text=_singleController.Ready?T("● يد واحدة","● ONE PAD"):T("○ إعداد اليد","○ PAD SETUP");_singleBadge.ForeColor=_singleController.Ready?_accent:Color.OrangeRed;
         _latencyBadge.Text=$"Loop {_engine.LoopHz:0} Hz";_latencyBadge.ForeColor=_engine.LoopHz>300?_accent:_muted;
         if(_page=="controller")
         {
