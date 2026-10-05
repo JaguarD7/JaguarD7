@@ -412,7 +412,7 @@ public static class HidHideManager
 
     private sealed record CliResult(int ExitCode, string StdOut, string StdErr)
     {
-        public bool Success => ExitCode == 0 && string.IsNullOrWhiteSpace(StdErr);
+        public bool Success => ExitCode == 0;
         public string Combined => (StdOut + Environment.NewLine + StdErr).Trim();
     }
 
@@ -527,7 +527,14 @@ public static class HidHideManager
         }
 
         // Normal cloak mode: hidden devices are invisible to every process except whitelisted apps.
-        Run(cli, "--inv-off");
+        var inverseOff = Run(cli, "--inv-off");
+        var inverseState = Run(cli, "--inv-state");
+        if (!inverseOff.Success || !inverseState.Success ||
+            !inverseState.StdOut.Contains("--inv-off", StringComparison.OrdinalIgnoreCase))
+        {
+            return new(true, appRegistered, false, false, false, false,
+                "HidHide inverse cloak could not be disabled safely: " + inverseOff.Combined, 0, 0);
+        }
 
         var groups = Gaming(cli);
         var hidden = Hidden(cli);
