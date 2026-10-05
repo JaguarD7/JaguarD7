@@ -12,9 +12,49 @@ internal static class Program
     [STAThread]
     static void Main()
     {
-        ApplicationConfiguration.Initialize();
-        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-        Application.Run(new MainForm());
+        try
+        {
+            ApplicationConfiguration.Initialize();
+            Application.ThreadException += (_, e) => CrashLogger.Log(e.Exception);
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
+                if (e.ExceptionObject is Exception ex) CrashLogger.Log(ex);
+            };
+            Application.Run(new MainForm());
+        }
+        catch (Exception ex)
+        {
+            CrashLogger.Log(ex);
+            try
+            {
+                MessageBox.Show(
+                    "FC27 Assist could not start. A crash log was saved to:\n" + CrashLogger.Path,
+                    "FC27 Assist",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+            catch { }
+        }
+    }
+}
+
+public static class CrashLogger
+{
+    public static string Path => System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "FC27Assist",
+        "crash.log");
+
+    public static void Log(Exception ex)
+    {
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(Path)!;
+            Directory.CreateDirectory(dir);
+            File.AppendAllText(Path,
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex}\r\n----------------------------------------\r\n");
+        }
+        catch { }
     }
 }
 
@@ -1251,7 +1291,9 @@ public sealed class MainForm : Form
     private readonly Label _latencyBadge = new();
     private readonly Label _singleBadge = new();
     private readonly Button _langBtn = new();
-    private readonly SingleControllerState _singleController;
+    private SingleControllerState _singleController = new(
+        false, false, false, false, false, false,
+        "Checking Single Controller Mode...", 0, 0);
     private readonly Dictionary<string, Button> _nav = new();
     private string _page = "dashboard";
     private readonly Color _bg = Color.FromArgb(10,14,23);
@@ -1268,7 +1310,6 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _cfg = AppConfig.Load();
-        _singleController = HidHideManager.Prepare();
         Text = "FC27 Assist";
         MinimumSize = new Size(1060, 700);
         Size = new Size(1240, 780);
@@ -1282,21 +1323,57 @@ public sealed class MainForm : Form
         _engine = new ControllerEngine(_cfg);
         _engine.StatusChanged += () => { if (!IsDisposed) BeginInvoke(UpdateStatus); };
 
-        if (_singleController.Ready)
-            _engine.Start();
-        else
-            BeginInvoke(() => MessageBox.Show(
-                _singleController.Message,
-                "FC27 Assist — Single Controller Mode",
-                MessageBoxButtons.OK,
-                _singleController.HidHideInstalled ? MessageBoxIcon.Information : MessageBoxIcon.Warning));
-
         ShowPage("dashboard");
+
+        Shown += async (_,_) => await InitializeControllerPipelineAsync();
 
         _uiTimer = new System.Windows.Forms.Timer { Interval = 60 };
         _uiTimer.Tick += (_,_) => UpdateStatus();
         _uiTimer.Start();
         FormClosing += (_,_) => { _cfg.Save(); _engine.Dispose(); };
+    }
+
+    private async Task InitializeControllerPipelineAsync()
+    {
+        try
+        {
+            _singleBadge.Text = T("… فحص اليد","… CHECKING PAD");
+            _singleBadge.ForeColor = Color.Gold;
+
+            var state = await Task.Run(HidHideManager.Prepare);
+            if (IsDisposed) return;
+
+            _singleController = state;
+            ShowPage(_page);
+            UpdateStatus();
+
+            if (state.Ready)
+            {
+                _engine.Start();
+                UpdateStatus();
+                return;
+            }
+
+            MessageBox.Show(
+                state.Message,
+                "FC27 Assist — Single Controller Mode",
+                MessageBoxButtons.OK,
+                state.HidHideInstalled ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            CrashLogger.Log(ex);
+            _singleController = new(
+                false, false, false, false, false, false,
+                "Single Controller setup failed: " + ex.Message, 0, 0);
+            ShowPage(_page);
+            UpdateStatus();
+            MessageBox.Show(
+                _singleController.Message + "\n\nCrash log: " + CrashLogger.Path,
+                "FC27 Assist",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
     }
 
     private void BuildShell()
