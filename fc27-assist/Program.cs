@@ -146,9 +146,9 @@ public static class SkillLibrary
         new(){ Name="Explosive Stepover", Stars=3, Category="Meta", Build=ms => Seq(
             S(ms, Dir.Forward, XButtons.LeftShoulder), S(ms, Dir.Right, XButtons.LeftShoulder), S(18, Dir.None, up:XButtons.LeftShoulder, neutralRs:true))},
         new(){ Name="Ball Roll Spin Right", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
-            S(Math.Max(70,ms+18), Dir.Right), S(ms, Dir.Forward), S(18, neutralRs:true))},
+            S(Math.Max(70,ms+18), Dir.Right, XButtons.LeftShoulder), S(ms, Dir.Forward, XButtons.LeftShoulder), S(18, up:XButtons.LeftShoulder, neutralRs:true))},
         new(){ Name="Ball Roll Spin Left", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
-            S(Math.Max(70,ms+18), Dir.Left), S(ms, Dir.Forward), S(18, neutralRs:true))},
+            S(Math.Max(70,ms+18), Dir.Left, XButtons.LeftShoulder), S(ms, Dir.Forward, XButtons.LeftShoulder), S(18, up:XButtons.LeftShoulder, neutralRs:true))},
         new(){ Name="Stepover Ball Right", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
             S(ms, Dir.Forward, XButtons.LeftShoulder), S(ms, Dir.Right, XButtons.LeftShoulder), S(18, up:XButtons.LeftShoulder, neutralRs:true))},
         new(){ Name="Stepover Ball Left", Stars=4, NewFc27=true, Category="Meta", Build=ms => Seq(
@@ -174,8 +174,8 @@ public static class SkillLibrary
         new(){ Name="Heel to Ball Roll", Stars=4, Category="Meta", Build=ms => Seq(S(ms,Dir.Forward,XButtons.LeftShoulder),S(ms,Dir.Back,XButtons.LeftShoulder),S(18,up:XButtons.LeftShoulder,neutralRs:true))},
         new(){ Name="Lane Change Right", Stars=4, Category="Meta", Build=ms => Seq(S(Math.Max(120,ms*2),Dir.Right,XButtons.LeftShoulder),S(20,up:XButtons.LeftShoulder,neutralRs:true))},
         new(){ Name="Lane Change Left", Stars=4, Category="Meta", Build=ms => Seq(S(Math.Max(120,ms*2),Dir.Left,XButtons.LeftShoulder),S(20,up:XButtons.LeftShoulder,neutralRs:true))},
-        new(){ Name="Drag Turn Right", Stars=4, NewFc27=true, Category="Fast", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Right),S(20,neutralRs:true))},
-        new(){ Name="Drag Turn Left", Stars=4, NewFc27=true, Category="Fast", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Left),S(20,neutralRs:true))},
+        new(){ Name="Drag Turn Right", Stars=4, NewFc27=true, Category="Fast", Build=ms => Seq(S(ms,Dir.Forward),S(ms,Dir.Right),S(20,neutralRs:true))},
+        new(){ Name="Drag Turn Left", Stars=4, NewFc27=true, Category="Fast", Build=ms => Seq(S(ms,Dir.Forward),S(ms,Dir.Left),S(20,neutralRs:true))},
         new(){ Name="Drag Back Spin Right", Stars=4, Category="Fast", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Right),S(20,neutralRs:true))},
         new(){ Name="Drag Back Spin Left", Stars=4, Category="Fast", Build=ms => Seq(S(ms,Dir.Back),S(ms,Dir.Left),S(20,neutralRs:true))},
         new(){ Name="Three Touch Roulette Right", Stars=4, Category="Direction", Build=ms => Seq(S(ms,Dir.Back,lt:255),S(ms,Dir.Right,lt:255),S(20,lt:0,neutralRs:true))},
@@ -207,8 +207,8 @@ public static class SkillLibrary
         new(){ Name="Fake Left Go Right", Stars=3, Category="Direction", Build=ms => HalfCircle(ms,true)},
         new(){ Name="Fake Right Go Left", Stars=3, Category="Direction", Build=ms => HalfCircle(ms,false)},
         new(){ Name="Flair Nutmeg", Stars=4, Category="Utility", Build=ms => Seq(S(ms,Dir.Forward,XButtons.LeftShoulder|XButtons.RightShoulder),S(20,up:XButtons.LeftShoulder|XButtons.RightShoulder,neutralRs:true))},
-        new(){ Name="Spin Right", Stars=4, Category="Direction", Build=ms => Circle(ms,true,XButtons.RightShoulder)},
-        new(){ Name="Spin Left", Stars=4, Category="Direction", Build=ms => Circle(ms,false,XButtons.RightShoulder)},
+        new(){ Name="Spin Right", Stars=4, Category="Direction", Build=ms => CircleWithTrigger(ms,true,XButtons.RightShoulder,255)},
+        new(){ Name="Spin Left", Stars=4, Category="Direction", Build=ms => CircleWithTrigger(ms,false,XButtons.RightShoulder,255)},
         new(){ Name="Flick Over", Stars=5, Category="5★", Build=ms => Seq(S(Math.Max(150,ms*3),Dir.Forward),S(20,neutralRs:true))},
         new(){ Name="Flair Rainbow", Stars=5, Category="5★", Build=ms => Seq(S(ms,Dir.Back,XButtons.LeftShoulder),S(ms,Dir.Forward,XButtons.LeftShoulder),S(20,up:XButtons.LeftShoulder,neutralRs:true))},
         new(){ Name="First Time Spin", Stars=5, NewFc27=true, Category="5★", Build=ms => Seq(new MacroStep(Math.Max(90,ms*2),Down:XButtons.LeftShoulder|XButtons.RightShoulder),new MacroStep(20,Up:XButtons.LeftShoulder|XButtons.RightShoulder))}
@@ -228,6 +228,14 @@ public static class SkillLibrary
         var dirs = clockwise ? new[]{Dir.Forward,Dir.Right,Dir.Back,Dir.Left} : new[]{Dir.Forward,Dir.Left,Dir.Back,Dir.Right};
         var list = dirs.Select(d => S(ms,d,modifier)).ToList();
         list.Add(S(20,up:modifier,neutralRs:true));
+        return list;
+    }
+
+    private static List<MacroStep> CircleWithTrigger(int ms, bool clockwise, XButtons modifier, byte lt)
+    {
+        var dirs = clockwise ? new[]{Dir.Forward,Dir.Right,Dir.Back,Dir.Left} : new[]{Dir.Forward,Dir.Left,Dir.Back,Dir.Right};
+        var list = dirs.Select(d => S(ms,d,modifier,lt:lt)).ToList();
+        list.Add(S(20,up:modifier,lt:0,neutralRs:true));
         return list;
     }
 
@@ -604,7 +612,7 @@ public sealed class ControllerEngine : IDisposable
             var held = MsSince(_bStart);
 
             // If B is still physically held past the tap threshold, this is a normal shot.
-            if (!_bNormalMode && b && held > cfg.BTapThresholdMs)
+            if (!_bNormalMode && held > cfg.BTapThresholdMs)
             {
                 _bNormalMode = true;
                 LastAction = "Normal Strong Shot";
@@ -631,12 +639,15 @@ public sealed class ControllerEngine : IDisposable
             {
                 // Normal shot: user chooses hold intent; app chooses the maximum power.
                 if (held < cfg.BNormalShotCapMs && !_bCapped)
+                {
+                    // Once Hold intent is confirmed, physical release no longer changes shot power.
                     r.Buttons |= (ushort)XButtons.B;
+                }
                 else
+                {
                     _bCapped = true;
-
-                if (!b || _bCapped)
                     _bActive = false;
+                }
             }
         }
 
