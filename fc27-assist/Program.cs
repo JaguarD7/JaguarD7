@@ -346,6 +346,7 @@ public sealed class ControllerEngine : IDisposable
     private short _snapLX, _snapLY;
     private long _lbDownAt;
     private bool _lbChordConsumed;
+    private bool _prevLtModePressed;
 
     public PlayMode Mode { get; private set; } = PlayMode.Attack;
     public bool Connected => _controllerConnected;
@@ -428,15 +429,25 @@ public sealed class ControllerEngine : IDisposable
             var p = state.Gamepad;
             LastPhysical = p;
 
-            if (p.LeftTrigger >= 28) SetMode(PlayMode.Defense);
+            bool ltModePressed = p.LeftTrigger >= 28;
+
+            // Mode changes are edge-triggered: one transition only.
+            if (ltModePressed && !_prevLtModePressed && Mode != PlayMode.Defense)
+                SetMode(PlayMode.Defense);
+
             if (Rising(p.Buttons, _prevButtons, XButtons.LeftShoulder))
             {
+                // Always track LB for LB+RS skill chords, but only change mode if needed.
                 _lbDownAt = Stopwatch.GetTimestamp();
                 _lbChordConsumed = false;
-                SetMode(PlayMode.Attack);
+                if (Mode != PlayMode.Attack)
+                    SetMode(PlayMode.Attack);
             }
+
             if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
                 _lbChordConsumed = false;
+
+            _prevLtModePressed = ltModePressed;
 
             UpdateFacing(p);
             var r = new VirtualReport { Buttons=p.Buttons, LT=p.LeftTrigger, RT=p.RightTrigger, LX=p.ThumbLX, LY=p.ThumbLY, RX=p.ThumbRX, RY=p.ThumbRY };
