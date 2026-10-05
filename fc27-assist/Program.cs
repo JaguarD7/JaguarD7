@@ -106,6 +106,21 @@ internal static class XInputNative
         catch (DllNotFoundException) { return XInputGetState910((uint)slot, out state) == 0; }
         catch (EntryPointNotFoundException) { return XInputGetState910((uint)slot, out state) == 0; }
     }
+
+    public static bool TryFindFirst(out int slot, out XInputState state)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            if (TryGetState(i, out state))
+            {
+                slot = i;
+                return true;
+            }
+        }
+        slot = -1;
+        state = default;
+        return false;
+    }
 }
 
 public sealed class AppConfig
@@ -923,7 +938,18 @@ public sealed class ControllerEngine : IDisposable
             int inputSlot = _physicalSlot >= 0 ? _physicalSlot : cfg.ControllerSlot;
             if (!XInputNative.TryGetState(inputSlot, out var state))
             {
-                if (_controllerConnected) { _controllerConnected = false; StatusChanged?.Invoke(); }
+                // USB reconnects and HidHide can change XInput slot ordering.
+                // Immediately scan all slots and relock onto the real physical controller.
+                if (XInputNative.TryFindFirst(out var foundSlot, out var foundState))
+                {
+                    _physicalSlot = foundSlot;
+                    state = foundState;
+                    if (!_controllerConnected) { _controllerConnected = true; StatusChanged?.Invoke(); }
+                }
+                else
+                {
+                    _physicalSlot = -1;
+                    if (_controllerConnected) { _controllerConnected = false; StatusChanged?.Invoke(); }
                 _prevButtons = 0;
                 _prevLtModePressed = false;
                 _rsLatched = false;
@@ -939,9 +965,10 @@ public sealed class ControllerEngine : IDisposable
                 _lowDrivenTail = false;
                 _pressOn = false;
                 _pressPhaseStart = 0;
-                _macro.Cancel();
-                Thread.Sleep(8);
-                continue;
+                    _macro.Cancel();
+                    Thread.Sleep(8);
+                    continue;
+                }
             }
             if (!_controllerConnected) { _controllerConnected = true; StatusChanged?.Invoke(); }
             var p = state.Gamepad;
@@ -1760,17 +1787,35 @@ public sealed class MainForm : Form
     private void StyleButton(Button b,bool active){b.FlatStyle=FlatStyle.Flat;b.FlatAppearance.BorderSize=0;b.BackColor=active?_accent:_panel2;b.ForeColor=active?Color.FromArgb(8,24,18):_text;b.Cursor=Cursors.Hand;b.Font=new Font("Segoe UI Semibold",10,FontStyle.Bold);}
     private void StyleBadge(Label l){l.Margin=new Padding(6,0,0,0);l.Padding=new Padding(8);l.ForeColor=_muted;l.TextAlign=ContentAlignment.MiddleCenter;l.BackColor=_panel;}
 
+    private bool ProbePhysicalController(out int slot, out XInputGamepad pad)
+    {
+        if (XInputNative.TryFindFirst(out slot, out var state))
+        {
+            pad = state.Gamepad;
+            return true;
+        }
+        pad = default;
+        return false;
+    }
+
     private void UpdateStatus()
     {
         if (IsDisposed) return;
         _modeBadge.Text=_engine.Mode==PlayMode.Attack?T("⚡ وضع الهجوم","⚡ ATTACK MODE"):T("◆ وضع الدفاع","◆ DEFENSE MODE");_modeBadge.ForeColor=_engine.Mode==PlayMode.Attack?_accent:_cyan;
-        _controllerBadge.Text=_engine.Connected?T("● اليد متصلة","● Controller OK"):T("○ اليد غير متصلة","○ Controller Lost");_controllerBadge.ForeColor=_engine.Connected?_accent:Color.OrangeRed;
+        bool physicalOk = ProbePhysicalController(out var physicalSlot, out var physicalPad);
+        _controllerBadge.Text=physicalOk?T($"● اليد متصلة S{physicalSlot}","● Physical OK S"+physicalSlot):T("○ اليد غير متصلة","○ Physical Lost");
+        _controllerBadge.ForeColor=physicalOk?_accent:Color.OrangeRed;
         _vigemBadge.Text=_engine.ViGEmReady?"● ViGEm OK":"○ ViGEm";_vigemBadge.ForeColor=_engine.ViGEmReady?_accent:Color.OrangeRed;
         _singleBadge.Text=_singleController.Ready?T("● يد واحدة","● ONE PAD"):T("○ إعداد اليد","○ PAD SETUP");_singleBadge.ForeColor=_singleController.Ready?_accent:Color.OrangeRed;
         _latencyBadge.Text=$"Loop {_engine.LoopHz:0} Hz";_latencyBadge.ForeColor=_engine.LoopHz>300?_accent:_muted;
         if(_page=="controller")
         {
-            var live=FindByName(_content,"liveInput") as Label;if(live!=null){var p=_engine.LastPhysical;live.Text=$"Mode      : {_engine.Mode}\nButtons   : 0x{p.Buttons:X4}\nLT / RT   : {p.LeftTrigger,3} / {p.RightTrigger,3}\nLS        : {p.ThumbLX,6} , {p.ThumbLY,6}\nRS        : {p.ThumbRX,6} , {p.ThumbRY,6}\nLoop      : {_engine.LoopHz:0} Hz\nLast      : {_engine.LastAction}\nViGEm     : {(_engine.ViGEmReady?"READY":"NOT READY")}\nError     : {_engine.Error}";}
+            var live=FindByName(_content,"liveInput") as Label;
+            if(live!=null)
+            {
+                var p = physicalOk ? physicalPad : _engine.LastPhysical;
+                live.Text=$"Physical  : {(physicalOk ? "CONNECTED" : "NOT FOUND")}\nXInput    : {(physicalOk ? "Slot " + physicalSlot : "-")}\nMode      : {_engine.Mode}\nButtons   : 0x{p.Buttons:X4}\nLT / RT   : {p.LeftTrigger,3} / {p.RightTrigger,3}\nLS        : {p.ThumbLX,6} , {p.ThumbLY,6}\nRS        : {p.ThumbRX,6} , {p.ThumbRY,6}\nLoop      : {_engine.LoopHz:0} Hz\nLast      : {_engine.LastAction}\nViGEm     : {(_engine.ViGEmReady?"READY":"NOT READY")}\nError     : {_engine.Error}";
+            }
         }
     }
 
