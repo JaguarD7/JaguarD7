@@ -114,12 +114,12 @@ public class PrecisionTests
     }
 
     [Fact]
-    public void FakeDirectionMovesAreNotReversed()
+    public void FakeDirectionMovesUseSmoothHalfArcs()
     {
         var l = SkillLibrary.Get("Fake Left Go Right").Build(52);
-        Assert.Equal(new[]{Dir.Left,Dir.Back,Dir.Right}, l.Take(3).Select(x=>x.Rs).ToArray());
+        Assert.Equal(new[]{Dir.Left,Dir.BackLeft,Dir.Back,Dir.BackRight,Dir.Right}, l.Take(5).Select(x=>x.Rs).ToArray());
         var r = SkillLibrary.Get("Fake Right Go Left").Build(52);
-        Assert.Equal(new[]{Dir.Right,Dir.Back,Dir.Left}, r.Take(3).Select(x=>x.Rs).ToArray());
+        Assert.Equal(new[]{Dir.Right,Dir.BackRight,Dir.Back,Dir.BackLeft,Dir.Left}, r.Take(5).Select(x=>x.Rs).ToArray());
     }
 
     [Fact]
@@ -159,4 +159,50 @@ public class PrecisionTests
         Assert.True(ConflictRules.ShotOwnsModifiers(false, true));
         Assert.False(ConflictRules.ShotOwnsModifiers(false, false));
     }
+
+    [Fact]
+    public void EightWayVectorsIncludeDiagonals()
+    {
+        var f = MacroRunner.RotatedVector(Dir.Forward, 0);
+        var fr = MacroRunner.RotatedVector(Dir.ForwardRight, 0);
+        var r = MacroRunner.RotatedVector(Dir.Right, 0);
+
+        Assert.True(f.y > 25000 && Math.Abs(f.x) < 1000);
+        Assert.True(fr.x > 18000 && fr.y > 18000);
+        Assert.True(r.x > 25000 && Math.Abs(r.y) < 1000);
+    }
+
+    [Fact]
+    public void MacroRunnerNeverSkipsRequiredEdgesAfterSchedulerStall()
+    {
+        var runner = new MacroRunner();
+        var steps = new List<MacroStep>
+        {
+            new(10, Down:XButtons.A),
+            new(10, Up:XButtons.A, Down:XButtons.B),
+            new(10, Up:XButtons.B, Down:XButtons.X),
+            new(10, Up:XButtons.X)
+        };
+
+        runner.Start("stall-test", steps, 0);
+        Thread.Sleep(45);
+
+        var first = new VirtualReport();
+        runner.Apply(first);
+
+        // A long OS stall may advance one macro edge, but must not jump straight to completion.
+        Assert.True(runner.Active);
+        Assert.False((first.Buttons & (ushort)XButtons.A) != 0);
+        Assert.True((first.Buttons & (ushort)XButtons.B) != 0);
+    }
+
+    [Fact]
+    public void ExplosiveStepoverUsesIntermediateDiagonal()
+    {
+        var steps = SkillLibrary.Get("Explosive Stepover").Build(52);
+        Assert.Equal(Dir.Forward, steps[0].Rs);
+        Assert.Equal(Dir.ForwardRight, steps[1].Rs);
+        Assert.Equal(Dir.Right, steps[2].Rs);
+    }
+
 }
