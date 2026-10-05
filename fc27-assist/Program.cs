@@ -127,7 +127,7 @@ public sealed class AppConfig
 {
     public string Language { get; set; } = "ar";
     public int ControllerSlot { get; set; } = 0;
-    public bool DirtyMeta { get; set; } = false;
+    public bool DirtyMeta { get; set; } = true;
     public int RsTriggerDeadzone { get; set; } = 18500;
     public int RsReleaseDeadzone { get; set; } = 9000;
     public int RsRearmMs { get; set; } = 90;
@@ -146,17 +146,38 @@ public sealed class AppConfig
     public bool HardTackleAssist { get; set; } = false;
     public bool MinimizeToTray { get; set; } = false;
 
-    public Dictionary<string, string> SkillMap { get; set; } = new()
+    public Dictionary<string, string> SkillMap { get; set; } = DefaultAttackSkillMap();
+
+    public static Dictionary<string, string> DefaultAttackSkillMap() => new()
     {
-        ["RS_UP"] = "Explosive Stepover",
+        ["RS_UP"] = "Heel Flick",
         ["RS_RIGHT"] = "Ball Roll Spin Right",
         ["RS_LEFT"] = "Ball Roll Spin Left",
-        ["RS_DOWN"] = "Stepover Ball Right",
-        ["LB_RS_UP"] = "Lateral Heel to Heel",
-        ["LB_RS_RIGHT"] = "Skilled Bridge",
-        ["LB_RS_LEFT"] = "Stop and Go",
-        ["LB_RS_DOWN"] = "Trickster Fake Shot"
+        ["RS_DOWN"] = "Simple Rainbow"
     };
+
+    public void NormalizeAttackOnly()
+    {
+        DirtyMeta = true;
+        AutoPress = false;
+        SprintJockeyAssist = false;
+        HardTackleAssist = false;
+
+        var defaults = DefaultAttackSkillMap();
+        var keys = defaults.Keys.ToArray();
+
+        foreach (var old in SkillMap.Keys.Where(k => k.StartsWith("LB_RS_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            SkillMap.Remove(old);
+
+        foreach (var key in keys)
+        {
+            if (!SkillMap.TryGetValue(key, out var name) || !SkillLibrary.IsRsOnlySafe(name))
+                SkillMap[key] = defaults[key];
+        }
+
+        if (keys.Select(k => SkillMap[k]).Distinct(StringComparer.OrdinalIgnoreCase).Count() != keys.Length)
+            SkillMap = defaults;
+    }
 
     private static string ConfigDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FC27Assist");
     private static string ConfigPath => Path.Combine(ConfigDir, "config.json");
@@ -165,10 +186,18 @@ public sealed class AppConfig
     {
         try
         {
-            if (!File.Exists(ConfigPath)) return new AppConfig();
-            return JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(ConfigPath)) ?? new AppConfig();
+            var cfg = !File.Exists(ConfigPath)
+                ? new AppConfig()
+                : JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(ConfigPath)) ?? new AppConfig();
+            cfg.NormalizeAttackOnly();
+            return cfg;
         }
-        catch { return new AppConfig(); }
+        catch
+        {
+            var cfg = new AppConfig();
+            cfg.NormalizeAttackOnly();
+            return cfg;
+        }
     }
 
     public void Save()
@@ -343,6 +372,23 @@ public static class SkillLibrary
         list.Add(S(20,up:modifier,lt:0,neutralRs:true));
         return list;
     }
+
+    public static bool IsRsOnlySafe(string name)
+    {
+        var skill = Skills.FirstOrDefault(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (skill is null) return false;
+        var steps = skill.Build(52);
+        return steps.All(step =>
+            step.Down == 0 &&
+            step.Up == 0 &&
+            !step.Lt.HasValue &&
+            !step.Rt.HasValue &&
+            step.Ls == Dir.None &&
+            !step.NeutralLs);
+    }
+
+    public static IReadOnlyList<SkillDef> RsOnlySafeSkills =>
+        Skills.Where(s => IsRsOnlySafe(s.Name)).ToList();
 
     public static SkillDef Get(string name) => Skills.FirstOrDefault(s => s.Name == name) ?? Skills[0];
 }
@@ -1123,28 +1169,8 @@ public sealed class ControllerEngine : IDisposable
         LastPhysical = p;
 
         // ATTACK-ONLY MODE:
-        // LT/RT/LS remain native. There is no defense mode transition and no
-        // automatic defensive input. This deliberately removes an entire class
-        // of state conflicts between movement, player switching and skill macros.
-        if (Rising(p.Buttons, _prevButtons, XButtons.LeftShoulder))
-        {
-            _lbDownAt = Stopwatch.GetTimestamp();
-            _lbChordConsumed = false;
-            _lbRawPassed = false;
-            _lbModeTransitionConsumed = false;
-        }
-
-        if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
-        {
-            var currentRsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
-            if ((_lbChordConsumed || _lbRawPassed) && currentRsMag >= cfg.RsReleaseDeadzone)
-                _rsLatched = true;
-
-            _lbChordConsumed = false;
-            _lbModeTransitionConsumed = false;
-            _lbRawPassed = false;
-        }
-
+        // LB/LT/RT/LS remain native at all times. The app never consumes LB
+        // and never uses it as a mode switch or skill modifier.
         UpdateFacing(p);
 
         var r = new VirtualReport
@@ -1162,14 +1188,19 @@ public sealed class ControllerEngine : IDisposable
 
         if (_macro.Active)
         {
-            r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
-            r.LT = 0;
-            r.RT = 0;
             _macro.Apply(r);
+
+            // Hard guarantee: skill macros may only own RS.
+            // Movement, aim modifiers and player-switch controls remain physical/native.
+            r.LX = p.ThumbLX;
+            r.LY = p.ThumbLY;
+            r.LT = p.LeftTrigger;
+            r.RT = p.RightTrigger;
+            r.Buttons = (ushort)((r.Buttons & ~(ushort)XButtons.LeftShoulder) |
+                                 (p.Buttons & (ushort)XButtons.LeftShoulder));
         }
 
-        if (cfg.DirtyMeta)
-            ApplyDirtyMeta(p, r, cfg);
+        ApplyDirtyMeta(p, r, cfg);
 
         _prevButtons = p.Buttons;
         _lastPhysicalRsMagnitude = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
@@ -1234,13 +1265,10 @@ public sealed class ControllerEngine : IDisposable
     private void ApplyAttack(XInputGamepad p, VirtualReport r, AppConfig cfg)
     {
         double rsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
-        bool lbHeld = Btn(p.Buttons, XButtons.LeftShoulder);
-        var lbAge = _lbDownAt == 0 ? double.MaxValue : MsSince(_lbDownAt);
 
         // One Flick = One Command.
-        // After a skill fires, the physical RS must return to center and remain there
-        // briefly before another skill can arm. A held direction or stick jitter
-        // therefore cannot repeat the same command after the macro/cooldown ends.
+        // A direction is classified once when the stick crosses the trigger threshold.
+        // It cannot fire again until RS is intentionally centered for the re-arm window.
         if (_rsNeedsCenter)
         {
             if (rsMag < cfg.RsReleaseDeadzone)
@@ -1265,45 +1293,25 @@ public sealed class ControllerEngine : IDisposable
             _rsLatched = false;
         }
 
-        // LB is a chord candidate only during the short intent window.
-        // Once native LB has been released to the game, RS is passed through until LB is released.
-        if (lbHeld && !_lbModeTransitionConsumed && !_lbChordConsumed && lbAge >= cfg.LbChordWindowMs)
-            _lbRawPassed = true;
+        // Physical RS is replaced only while deciding/executing a skill.
+        r.RX = 0;
+        r.RY = 0;
 
-        if (_lbRawPassed)
+        if (!_rsLatched && !_rsNeedsCenter && !_macro.Active &&
+            rsMag >= cfg.RsTriggerDeadzone && SkillReady(cfg))
         {
-            r.RX = p.ThumbRX;
-            r.RY = p.ThumbRY;
-        }
-        else
-        {
-            r.RX = 0;
-            r.RY = 0;
+            var dir = Cardinal(p.ThumbRX, p.ThumbRY);
+            string key = "RS_" + dir;
 
-            bool lbSkillModifier = lbHeld &&
-                (!_lbModeTransitionConsumed || lbAge <= cfg.LbChordWindowMs);
-
-            if (!_rsLatched && !_rsNeedsCenter && !_macro.Active && rsMag >= cfg.RsTriggerDeadzone && SkillReady(cfg))
+            if (cfg.SkillMap.TryGetValue(key, out var skillName) && SkillLibrary.IsRsOnlySafe(skillName))
             {
-                var dir = Cardinal(p.ThumbRX, p.ThumbRY);
-                string key = (lbSkillModifier ? "LB_RS_" : "RS_") + dir;
-                if (cfg.SkillMap.TryGetValue(key, out var skillName))
-                {
-                    if (lbSkillModifier) _lbChordConsumed = true;
-                    var skill = SkillLibrary.Get(skillName);
-                    _macro.Start(skill.Name, skill.Build(cfg.SkillStepMs), _facingRad);
-                    LastAction = skill.Name;
-                    _rsLatched = true;
-                    _rsNeedsCenter = true;
-                    _rsCenterSince = 0;
-                }
+                var skill = SkillLibrary.Get(skillName);
+                _macro.Start(skill.Name, skill.Build(cfg.SkillStepMs), _facingRad);
+                LastAction = dir + " → " + skill.Name;
+                _rsLatched = true;
+                _rsNeedsCenter = true;
+                _rsCenterSince = 0;
             }
-        }
-
-        if (lbHeld)
-        {
-            if (ConflictRules.SuppressLb(_lbModeTransitionConsumed, _lbChordConsumed, lbAge, cfg.LbChordWindowMs))
-                r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.LeftShoulder);
         }
 
         // Manual face-button input always wins over a running skill macro.
@@ -1332,22 +1340,15 @@ public sealed class ControllerEngine : IDisposable
             r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.A|XButtons.RightShoulder)) & ~(ushort)XButtons.LeftShoulder);
         }
 
-        if (Btn(p.Buttons, XButtons.Y))
-        {
-            r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.Y|XButtons.LeftShoulder)) & ~(ushort)XButtons.RightShoulder);
-        }
-
         HandleShotB(p, r, cfg);
 
-        // The calibrated B state machine owns shot modifiers while active.
-        if (ConflictRules.ShotOwnsModifiers(_bActive, _lowDrivenTail))
-            r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
+        // B timing is automated, but shot direction (LS) and shoulder modifiers remain fully physical/native.
     }
 
     private bool SkillReady(AppConfig cfg)
     {
         if (_lastSkillEnd == 0) return true;
-        var cd = cfg.DirtyMeta ? Math.Min(90, cfg.SkillCooldownMs) : cfg.SkillCooldownMs;
+        var cd = Math.Min(90, cfg.SkillCooldownMs);
         return MsSince(_lastSkillEnd) >= cd;
     }
 
@@ -1468,10 +1469,7 @@ public sealed class ControllerEngine : IDisposable
             double ls = Math.Sqrt((double)p.ThumbLX*p.ThumbLX + (double)p.ThumbLY*p.ThumbLY);
             if (ls > 9000) r.RT = 255;
         }
-        if (now < _fidgetSnapUntil && !_macro.Active)
-        {
-            r.LX = _snapLX; r.LY = _snapLY;
-        }
+        // Never rewrite LS. User movement and shot direction stay 100% physical.
     }
 
     private void WriteReportUnsafe(VirtualReport r)
@@ -1568,9 +1566,7 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _cfg = AppConfig.Load();
-        _cfg.AutoPress = false;
-        _cfg.SprintJockeyAssist = false;
-        _cfg.HardTackleAssist = false;
+        _cfg.NormalizeAttackOnly();
         Text = "FC27 Assist";
         MinimumSize = new Size(1060, 700);
         Size = new Size(1240, 780);
@@ -1690,7 +1686,7 @@ public sealed class MainForm : Form
         AddNav(side,"controller","◎  " + T("اختبار اليد","Controller Test"));
         AddNav(side,"settings","⚙  " + T("الإعدادات","Settings"));
 
-        var foot = new Label { Dock=DockStyle.Bottom, Height=60, Text=T("RS = مهارات   •   LT/RT/LS = طبيعي","RS = Skills   •   LT/RT/LS = Native"), ForeColor=_muted, TextAlign=ContentAlignment.MiddleLeft };
+        var foot = new Label { Dock=DockStyle.Bottom, Height=60, Text=T("RS = مهارات   •   LB/LT/RT/LS = طبيعي","RS = Skills   •   LB/LT/RT/LS = Native"), ForeColor=_muted, TextAlign=ContentAlignment.MiddleLeft };
         side.Controls.Add(foot);
 
         var top = new Panel { Dock=DockStyle.Top, Height=74, BackColor=_bg, Padding=new Padding(24,14,24,10) };
@@ -1734,48 +1730,85 @@ public sealed class MainForm : Form
         var root=Stack(); root.Controls.Add(Title(T("FC27 Assist — لوحة التحكم","FC27 Assist — Control Center"),T("وضع هجوم فقط لتقليل التعارضات والحفاظ على حركة اليد الطبيعية.","Attack-only mode to minimize conflicts while keeping native movement controls.")));
         var row=Row(3,190);
         row.Controls.Add(Card(T("الوضع الحالي","CURRENT MODE"), T("هجوم فقط ⚡","ATTACK ONLY ⚡"), T("LT / RT / LS تعمل طبيعي","LT / RT / LS stay native")));
-        row.Controls.Add(Card(T("Dirty Meta","DIRTY META"), _cfg.DirtyMeta?T("مفعّل","ENABLED"):T("متوقف","OFF"), T("مفتاح واحد لكل إضافات الميتا","One switch for the full meta layer")));
+        row.Controls.Add(Card(T("Dirty Meta","DIRTY META"), T("مفعّل دائمًا","ALWAYS ON"), T("مهارات أسرع بدون لمس حركة LS","Faster skill layer without rewriting LS")));
         row.Controls.Add(Card(T("محرك اليد","CONTROLLER ENGINE"), _singleController.Ready ? T("يد واحدة","ONE CONTROLLER") : T("إعداد مطلوب","SETUP REQUIRED"), _singleController.Message));
         root.Controls.Add(row);
 
-        var dirty=PanelCard(210); var lbl=BigLabel(T("DIRTY META — الوضع القذر","DIRTY META — FULL LAYER")); dirty.Controls.Add(lbl);
-        var ddesc=new Label{Text=T("Fidget Snap + Explosive Exit + Faster Skill Chaining. الاختصارات الأساسية تظل شغالة حتى لو كان Dirty Meta متوقف.","Fidget Snap + Explosive Exit + faster skill chaining. Core shortcuts remain active even when Dirty Meta is off."),AutoSize=false,Height=55,Dock=DockStyle.Top,ForeColor=_muted}; dirty.Controls.Add(ddesc); ddesc.BringToFront(); lbl.BringToFront();
-        var toggle=new Button{Text=_cfg.DirtyMeta?T("إيقاف Dirty Meta","TURN DIRTY META OFF"):T("تشغيل Dirty Meta كامل","ENABLE FULL DIRTY META"),Height=46,Width=250,Dock=DockStyle.Bottom}; StyleButton(toggle,_cfg.DirtyMeta); toggle.Click+=(_,_)=>{_cfg.DirtyMeta=!_cfg.DirtyMeta;SaveAndRefresh("dashboard");}; dirty.Controls.Add(toggle);
+        var dirty=PanelCard(170); var lbl=BigLabel(T("DIRTY META — أساسي دائمًا","DIRTY META — ALWAYS ON")); dirty.Controls.Add(lbl);
+        var ddesc=new Label{Text=T("Skill chaining أسرع + Explosive Exit. لا يتم تعديل LS حتى تبقى الحركة واتجاه التسديد تحت تحكمك بالكامل.","Faster skill chaining + Explosive Exit. LS is never rewritten, so movement and shot direction remain fully yours."),AutoSize=false,Height=72,Dock=DockStyle.Fill,ForeColor=_muted,Padding=new Padding(0,12,0,0)}; dirty.Controls.Add(ddesc); ddesc.BringToFront(); lbl.BringToFront();
         root.Controls.Add(dirty);
 
         var info=PanelCard(170); info.Controls.Add(BigLabel(T("منع التعارض","CONFLICT CONTROL")));
-        info.Controls.Add(new Label{Text=T("لا يوجد وضع دفاع. LT وRT وLS تمر مباشرة للعبة. RS للمهارات وLB + RS للطبقة الثانية فقط.","Defense mode is disabled. LT, RT and LS pass directly to the game. RS handles skills and LB + RS is the second skill layer."),AutoSize=false,Height=72,Dock=DockStyle.Fill,ForeColor=_muted,Padding=new Padding(0,12,0,0)});
+        info.Controls.Add(new Label{Text=T("LB وLT وRT وLS تمر مباشرة للعبة بدون تدخل. RS فقط للمهارات. Y تمريرة بينية أرضية طبيعية.","LB, LT, RT and LS pass directly to the game. Only RS is used for skills. Y remains the native ground through pass."),AutoSize=false,Height=72,Dock=DockStyle.Fill,ForeColor=_muted,Padding=new Padding(0,12,0,0)});
         root.Controls.Add(info);
         return root;
     }
 
     private Control BuildAttack()
     {
-        var root=Stack(); root.Controls.Add(Title(T("الهجوم","Attack Only"),T("الهجوم دائم. القير اليمين للمهارات وLB + RS للطبقة الثانية.","Attack is always active. RS triggers skills and LB + RS uses the second layer.")));
-        var grid=Row(2,360); grid.Controls.Add(BuildMappingCard(false)); grid.Controls.Add(BuildMappingCard(true)); root.Controls.Add(grid);
+        var root=Stack(); root.Controls.Add(Title(T("الهجوم","Attack Only"),T("الهجوم دائم. RS فقط للمهارات، وLB يبقى طبيعي لتبديل اللاعبين.","Attack is always active. Only RS triggers skills; LB stays native for player switching.")));
+        var grid=Row(1,360); grid.Controls.Add(BuildMappingCard(false)); root.Controls.Add(grid);
         var shot=PanelCard(235); shot.Controls.Add(BigLabel(T("التسديد والتمرير","SHOOTING & PASSING")));
         var txt=new Label{Dock=DockStyle.Fill,ForeColor=_muted,Text=T(
-            $"B نقرة سريعة → Low Driven تلقائي\nB ضغط مستمر → شوت عادي قوي (حد القوة { _cfg.BNormalShotCapMs }ms)\nA → Driven Ground Pass (RB+A)\nY → Lobbed Through Pass (LB+Y)",
-            $"Quick B tap → automatic Low Driven\nHold B → strong normal shot (power cap {_cfg.BNormalShotCapMs}ms)\nA → Driven Ground Pass (RB+A)\nY → Lobbed Through Pass (LB+Y)"),Padding=new Padding(0,12,0,0)}; shot.Controls.Add(txt);
+            $"B نقرة سريعة → Low Driven تلقائي\nB ضغط مستمر → شوت عادي قوي (حد القوة { _cfg.BNormalShotCapMs }ms)\nاتجاه التسديد → LS بيدك 100%\nA → Driven Ground Pass (RB+A)\nY → تمريرة بينية أرضية طبيعية",
+            $"Quick B tap → automatic Low Driven\nHold B → strong normal shot (power cap {_cfg.BNormalShotCapMs}ms)\nShot direction → 100% your LS\nA → Driven Ground Pass (RB+A)\nY → native ground through pass"),Padding=new Padding(0,12,0,0)}; shot.Controls.Add(txt);
         root.Controls.Add(shot); return root;
     }
 
     private Control BuildMappingCard(bool lb)
     {
-        var p=PanelCard(340); p.Controls.Add(BigLabel(lb?T("LB + RS — الطبقة الثانية","LB + RS — SECOND LAYER"):T("RS — المهارات الأساسية","RS — CORE SKILLS")));
-        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=4,Padding=new Padding(0,12,0,0)}; table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,31)); table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,69));
-        string[] dirs={"UP","RIGHT","LEFT","DOWN"}; string[] arrows={"↑","→","←","↓"};
+        var p=PanelCard(340);
+        p.Controls.Add(BigLabel(T("RS — المهارات الأساسية","RS — CORE SKILLS")));
+
+        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=4,Padding=new Padding(0,12,0,0)};
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,31));
+        table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,69));
+
+        string[] dirs={"UP","RIGHT","LEFT","DOWN"};
+        string[] arrows={"↑","→","←","↓"};
+        var safe = SkillLibrary.RsOnlySafeSkills.Cast<object>().ToArray();
+
         for(int i=0;i<4;i++)
         {
-            string key=(lb?"LB_RS_":"RS_")+dirs[i];
-            table.Controls.Add(new Label{Text=(lb?"LB + ":"")+"RS "+arrows[i],Dock=DockStyle.Fill,ForeColor=_muted,TextAlign=ContentAlignment.MiddleLeft},0,i);
+            string key="RS_"+dirs[i];
+            table.Controls.Add(new Label{Text="RS "+arrows[i],Dock=DockStyle.Fill,ForeColor=_muted,TextAlign=ContentAlignment.MiddleLeft},0,i);
+
             var cb=new ComboBox{Dock=DockStyle.Fill,DropDownStyle=ComboBoxStyle.DropDownList,BackColor=_panel2,ForeColor=_text,FlatStyle=FlatStyle.Flat};
-            cb.Items.AddRange(SkillLibrary.Skills.Cast<object>().ToArray());
-            var current=SkillLibrary.Get(_cfg.SkillMap.TryGetValue(key,out var n)?n:SkillLibrary.Skills[0].Name); cb.SelectedItem=SkillLibrary.Skills.First(s=>s.Name==current.Name);
-            cb.SelectedIndexChanged+=(_,_)=>{if(cb.SelectedItem is SkillDef sd){_cfg.SkillMap[key]=sd.Name;_cfg.Save();_engine.UpdateConfig(_cfg);}};
+            cb.Items.AddRange(safe);
+
+            var fallback = AppConfig.DefaultAttackSkillMap()[key];
+            var currentName = _cfg.SkillMap.TryGetValue(key,out var n) ? n : fallback;
+            var current = SkillLibrary.RsOnlySafeSkills.FirstOrDefault(x=>x.Name==currentName)
+                          ?? SkillLibrary.Get(fallback);
+            cb.SelectedItem=current;
+
+            cb.SelectedIndexChanged+=(_,_)=>
+            {
+                if(cb.SelectedItem is not SkillDef sd) return;
+
+                var duplicate = _cfg.SkillMap
+                    .Where(kv => kv.Key.StartsWith("RS_", StringComparison.OrdinalIgnoreCase) && kv.Key != key)
+                    .Any(kv => kv.Value.Equals(sd.Name, StringComparison.OrdinalIgnoreCase));
+
+                if (duplicate)
+                {
+                    MessageBox.Show(T("كل اتجاه لازم تكون له مهارة مختلفة.","Each RS direction must use a different skill."),
+                        "FC27 Assist", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    cb.SelectedItem = current;
+                    return;
+                }
+
+                _cfg.SkillMap[key]=sd.Name;
+                _cfg.NormalizeAttackOnly();
+                _cfg.Save();
+                _engine.UpdateConfig(_cfg);
+                current = sd;
+            };
             table.Controls.Add(cb,1,i);
         }
-        p.Controls.Add(table); return p;
+
+        p.Controls.Add(table);
+        return p;
     }
 
     private Control BuildSkills()
@@ -1827,7 +1860,7 @@ public sealed class MainForm : Form
         AddNumeric(table,6,T("Normal Shot Power Cap (ms)","Normal Shot Power Cap (ms)"),_cfg.BNormalShotCapMs,300,1000,v=>_cfg.BNormalShotCapMs=v);
         AddNumeric(table,7,T("Low Driven Gap (ms)","Low Driven Gap (ms)"),_cfg.LowDrivenSecondTapGapMs,10,100,v=>_cfg.LowDrivenSecondTapGapMs=v);
         AddNumeric(table,8,T("Low Driven 2nd Tap (ms)","Low Driven 2nd Tap (ms)"),_cfg.LowDrivenSecondTapMs,20,100,v=>_cfg.LowDrivenSecondTapMs=v);
-        AddNumeric(table,9,T("LB Skill Chord Window (ms)","LB Skill Chord Window (ms)"),_cfg.LbChordWindowMs,30,160,v=>_cfg.LbChordWindowMs=v);
+        AddNumeric(table,9,T("RS إعادة التسليح (ms)","RS Rearm Center (ms)"),_cfg.RsRearmMs,40,250,v=>_cfg.RsRearmMs=v);
         AddNumeric(table,10,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,250,1000,v=>_cfg.InputLoopHz=v);
         p.Controls.Add(table);root.Controls.Add(p);
         var buttons=PanelCard(135);
@@ -1904,7 +1937,7 @@ public sealed class MainForm : Form
     }
 
     private static Control? FindByName(Control root,string name){if(root.Name==name)return root;foreach(Control c in root.Controls){var f=FindByName(c,name);if(f!=null)return f;}return null;}
-    private void SaveCfg(){_cfg.Save();_engine.UpdateConfig(_cfg);}
+    private void SaveCfg(){_cfg.NormalizeAttackOnly();_cfg.Save();_engine.UpdateConfig(_cfg);}
     private void SaveAndRefresh(string page){SaveCfg();ShowPage(page);UpdateStatus();}
     private void ToggleLanguage(){_cfg.Language=Ar?"en":"ar";_cfg.Save();BuildLanguageRefresh();}
     private void BuildLanguageRefresh(){_langBtn.Text=Ar?"EN":"عربي";foreach(var kv in _nav){kv.Value.Text=kv.Key switch{"dashboard"=>"◈  "+T("الرئيسية","Dashboard"),"attack"=>"⚡  "+T("الهجوم","Attack"),"skills"=>"✦  "+T("مكتبة المهارات","Skill Library"),"controller"=>"◎  "+T("اختبار اليد","Controller Test"),_=>"⚙  "+T("الإعدادات","Settings")};}ShowPage(_page);}
