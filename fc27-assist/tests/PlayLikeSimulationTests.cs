@@ -437,4 +437,67 @@ public class PlayLikeSimulationTests
         var native = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
         Assert.True(Has(native, XButtons.LeftShoulder)); // new LB press while already attacking is native
     }
+
+
+    [Fact]
+    public void AttackRsHeldIntoDefenseIsQuarantinedUntilCenter()
+    {
+        var cfg = new AppConfig { AutoPress=false };
+        using var e = Engine(cfg);
+
+        e.ProcessFrameForTest(Pad(ry:30000), cfg); // attack skill starts
+        var transition = e.ProcessFrameForTest(Pad(lt:255, ry:30000), cfg);
+
+        Assert.Equal(PlayMode.Defense, e.Mode);
+        Assert.Equal((short)0, transition.RX);
+        Assert.Equal((short)0, transition.RY);
+
+        var stillHeld = e.ProcessFrameForTest(Pad(lt:255, ry:30000), cfg);
+        Assert.Equal((short)0, stillHeld.RX);
+        Assert.Equal((short)0, stillHeld.RY);
+
+        e.ProcessFrameForTest(Pad(lt:255), cfg); // RS center releases quarantine
+        var freshSwitch = e.ProcessFrameForTest(Pad(lt:255, rx:30000), cfg);
+        Assert.Equal((short)30000, freshSwitch.RX);
+    }
+
+    [Fact]
+    public void LtHeldWhileSwitchingBackToAttackDoesNotLeakAsAttackModifier()
+    {
+        var cfg = new AppConfig { AutoPress=false };
+        using var e = Engine(cfg);
+        EnterDefense(e, cfg);
+
+        var transition = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, lt:255), cfg);
+        Assert.Equal(PlayMode.Attack, e.Mode);
+        Assert.Equal((byte)0, transition.LT);
+        Assert.False(Has(transition, XButtons.LeftShoulder));
+
+        var stillHeld = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, lt:255), cfg);
+        Assert.Equal((byte)0, stillHeld.LT);
+
+        e.ProcessFrameForTest(Pad(), cfg); // release LT and LB
+        var freshLt = e.ProcessFrameForTest(Pad(lt:255), cfg);
+        Assert.Equal(PlayMode.Defense, e.Mode);
+        Assert.Equal((byte)255, freshLt.LT);
+    }
+
+    [Fact]
+    public void RbHeldAcrossDefenseToAttackIsBlockedUntilRelease()
+    {
+        var cfg = new AppConfig { AutoPress=false };
+        using var e = Engine(cfg);
+        EnterDefense(e, cfg);
+
+        var transition = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder | XButtons.RightShoulder), cfg);
+        Assert.Equal(PlayMode.Attack, e.Mode);
+        Assert.False(Has(transition, XButtons.RightShoulder));
+
+        var stillHeld = e.ProcessFrameForTest(Pad(XButtons.RightShoulder), cfg);
+        Assert.False(Has(stillHeld, XButtons.RightShoulder));
+
+        e.ProcessFrameForTest(Pad(), cfg);
+        var freshRb = e.ProcessFrameForTest(Pad(XButtons.RightShoulder), cfg);
+        Assert.True(Has(freshRb, XButtons.RightShoulder));
+    }
 }
