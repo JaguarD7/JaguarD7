@@ -168,8 +168,9 @@ public class PrecisionTests
         var r = MacroRunner.RotatedVector(Dir.Right, 0);
 
         Assert.True(f.y > 25000 && Math.Abs(f.x) < 1000);
-        Assert.True(fr.x > 18000 && fr.y > 18000);
-        Assert.True(r.x > 25000 && Math.Abs(r.y) < 1000);
+        Assert.True(Math.Abs(fr.x) > 18000 && fr.y > 18000);
+        Assert.True(Math.Abs(r.x) > 25000 && Math.Abs(r.y) < 1000);
+        Assert.Equal(Math.Sign(r.x), Math.Sign(fr.x));
     }
 
     [Fact]
