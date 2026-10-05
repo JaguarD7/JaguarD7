@@ -147,7 +147,7 @@ public class PlayLikeSimulationTests
         Assert.Contains("UP", first);
 
         e.ProcessFrameForTest(Pad(XButtons.A, ry:30000), cfg);
-        Assert.Equal("Manual override", e.LastAction);
+        Assert.Equal("Fast Driven Ground Pass", e.LastAction);
 
         Thread.Sleep(120);
         for (int i=0;i<5;i++)
@@ -155,7 +155,9 @@ public class PlayLikeSimulationTests
             e.ProcessFrameForTest(Pad(ry:30000), cfg);
             Thread.Sleep(15);
         }
-        Assert.Equal("Manual override", e.LastAction);
+
+        // Holding RS in the same direction must not fire another skill after the pass.
+        Assert.Equal("Fast Driven Ground Pass", e.LastAction);
 
         e.ProcessFrameForTest(Pad(), cfg);
         Thread.Sleep(cfg.RsRearmMs + 20);
