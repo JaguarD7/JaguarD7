@@ -131,7 +131,12 @@ public sealed class SkillDef
     public bool NewFc27 { get; init; }
     public string Category { get; init; } = "All";
     public Func<int, List<MacroStep>> Build { get; init; } = _ => new();
-    public override string ToString() => $"{Name}  ({new string('★', Math.Max(1, Stars))}{(Trickster ? " • Trickster" : "")})";
+    public override string ToString()
+    {
+        var req = Stars > 0 ? new string('★', Stars) : "";
+        if (Trickster) req = string.IsNullOrEmpty(req) ? "Trickster Required" : req + " • Trickster";
+        return $"{Name}  ({req})";
+    }
 }
 
 public static class SkillLibrary
@@ -159,7 +164,7 @@ public static class SkillLibrary
             S(ms, Dir.Forward, lt:255), S(ms, Dir.Back, lt:255), S(20, lt:0, neutralRs:true))},
         new(){ Name="Stop and Go", Stars=2, NewFc27=true, Category="Fast", Build=ms => Seq(
             S(ms, Dir.Back, lt:255), S(ms, Dir.Forward, lt:255), S(20, lt:0, neutralRs:true))},
-        new(){ Name="Trickster Fake Shot", Stars=4, Trickster=true, Category="Meta", Build=ms => Seq(
+        new(){ Name="Trickster Fake Shot", Stars=0, Trickster=true, Category="Meta", Build=ms => Seq(
             S(42, down:XButtons.LeftShoulder|XButtons.B), S(28, down:XButtons.LeftShoulder|XButtons.A, up:XButtons.B), S(ms, Dir.Right, XButtons.LeftShoulder, XButtons.A), S(20, up:XButtons.LeftShoulder, neutralRs:true))},
 
         new(){ Name="Ball Roll Right", Stars=2, Category="Fast", Build=ms => Seq(S(Math.Max(110,ms*2), Dir.Right), S(20, neutralRs:true))},
