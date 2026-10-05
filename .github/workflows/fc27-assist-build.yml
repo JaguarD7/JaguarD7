@@ -25,7 +25,7 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Restore
-        run: dotnet restore fc27-assist/FC27Assist.csproj
+        run: dotnet restore fc27-assist/tests/FC27Assist.Tests.csproj
 
       - name: Precision regression tests
         run: dotnet test fc27-assist/tests/FC27Assist.Tests.csproj -c Release --no-restore --verbosity normal
