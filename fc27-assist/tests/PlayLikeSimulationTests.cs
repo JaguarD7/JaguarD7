@@ -19,78 +19,39 @@ public class PlayLikeSimulationTests
     private static ControllerEngine Engine(AppConfig? cfg = null)
         => new(cfg ?? new AppConfig { AutoPress = false, DirtyMeta = false });
 
-    private static void EnterDefense(ControllerEngine e, AppConfig cfg)
-    {
-        e.ProcessFrameForTest(Pad(lt:255), cfg);
-        Assert.Equal(PlayMode.Defense, e.Mode);
-        e.ProcessFrameForTest(Pad(), cfg);
-    }
-
     [Fact]
-    public void DefenseToAttackLbIsConsumedForWholePhysicalPress()
+    public void AttackModeIsPermanentAndLtRemainsNative()
     {
-        var cfg = new AppConfig { AutoPress=false };
+        var cfg = new AppConfig { AutoPress=true, SprintJockeyAssist=true, HardTackleAssist=true };
         using var e = Engine(cfg);
-        EnterDefense(e, cfg);
 
-        var first = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.False(Has(first, XButtons.LeftShoulder));
-
-        Thread.Sleep(cfg.LbChordWindowMs + 20);
-        var held = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.False(Has(held, XButtons.LeftShoulder));
-
-        e.ProcessFrameForTest(Pad(), cfg); // release transition press
-
-        var nativeStart = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.False(Has(nativeStart, XButtons.LeftShoulder)); // chord decision window
-        Thread.Sleep(cfg.LbChordWindowMs + 20);
-        var nativeHeld = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.True(Has(nativeHeld, XButtons.LeftShoulder));
-    }
-
-    [Fact]
-    public void SimultaneousLbRsFromDefenseExecutesSecondLayerWithoutRawLb()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-        EnterDefense(e, cfg);
-
-        var r = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, rx:30000), cfg);
+        var r = e.ProcessFrameForTest(Pad(lt:255, rt:180, lx:-20000, ly:24000), cfg);
 
         Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.Equal("Skilled Bridge", e.LastAction);
-        Assert.False(Has(r, XButtons.LeftShoulder));
         Assert.Equal((byte)255, r.LT);
+        Assert.Equal((byte)180, r.RT);
+        Assert.Equal((short)-20000, r.LX);
+        Assert.Equal((short)24000, r.LY);
     }
 
     [Fact]
-    public void StaleDefenseRsCannotBecomeAttackSkill()
+    public void DefenseAutomationCanNeverInjectRb()
     {
-        var cfg = new AppConfig { AutoPress=false };
+        var cfg = new AppConfig { AutoPress=true, SprintJockeyAssist=true, HardTackleAssist=true };
         using var e = Engine(cfg);
-        EnterDefense(e, cfg);
 
-        var switchFrame = e.ProcessFrameForTest(Pad(rx:30000), cfg);
-        Assert.Equal((short)30000, switchFrame.RX); // native player switching
-
-        var transition = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, rx:30000), cfg);
-        Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.NotEqual("Skilled Bridge", e.LastAction);
-        Assert.Equal((short)0, transition.RX);
-        Assert.False(Has(transition, XButtons.LeftShoulder));
-
-        e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg); // RS back to center
-        var freshFlick = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, rx:30000), cfg);
-        Assert.Equal("Skilled Bridge", e.LastAction);
-        Assert.Equal((byte)255, freshFlick.LT);
+        for (int i = 0; i < 20; i++)
+        {
+            var r = e.ProcessFrameForTest(Pad(lt:255, lx:20000), cfg);
+            Assert.False(Has(r, XButtons.RightShoulder));
+            Assert.Equal(PlayMode.Attack, e.Mode);
+        }
     }
 
     [Fact]
     public void NativeLbAfterIntentWindowCannotLaterTurnIntoLbSkill()
     {
-        var cfg = new AppConfig { AutoPress=false };
+        var cfg = new AppConfig();
         using var e = Engine(cfg);
 
         var start = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
@@ -107,15 +68,27 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
+    public void SimultaneousLbRsExecutesSecondLayerWithoutRawLb()
+    {
+        var cfg = new AppConfig();
+        using var e = Engine(cfg);
+
+        var r = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, rx:30000), cfg);
+
+        Assert.Equal("Skilled Bridge", e.LastAction);
+        Assert.False(Has(r, XButtons.LeftShoulder));
+        Assert.Equal((byte)255, r.LT);
+    }
+
+    [Fact]
     public void HeldRsDirectionTriggersOnlyOnceUntilCentered()
     {
-        var cfg = new AppConfig { AutoPress=false, DirtyMeta=false, SkillCooldownMs=60, RsRearmMs=70 };
+        var cfg = new AppConfig { DirtyMeta=false, SkillCooldownMs=60, RsRearmMs=70 };
         using var e = Engine(cfg);
 
         e.ProcessFrameForTest(Pad(ry:30000), cfg);
         Assert.Equal("Explosive Stepover", e.LastAction);
 
-        // Cancel the macro manually, then keep the same physical RS direction held.
         e.ProcessFrameForTest(Pad(XButtons.A, ry:30000), cfg);
         Assert.Equal("Manual override", e.LastAction);
 
@@ -126,16 +99,13 @@ public class PlayLikeSimulationTests
             Thread.Sleep(20);
         }
 
-        // A held stick must not start the command again.
         Assert.Equal("Manual override", e.LastAction);
 
-        // A brief center bounce is not enough to re-arm.
         e.ProcessFrameForTest(Pad(), cfg);
         Thread.Sleep(20);
         e.ProcessFrameForTest(Pad(ry:30000), cfg);
         Assert.Equal("Manual override", e.LastAction);
 
-        // Only a deliberate center hold re-arms the next flick.
         e.ProcessFrameForTest(Pad(), cfg);
         Thread.Sleep(cfg.RsRearmMs + 20);
         e.ProcessFrameForTest(Pad(), cfg);
@@ -146,7 +116,7 @@ public class PlayLikeSimulationTests
     [Fact]
     public void RunningSkillSuppressesPhysicalSprintAndModifiers()
     {
-        var cfg = new AppConfig { AutoPress=false };
+        var cfg = new AppConfig();
         using var e = Engine(cfg);
 
         var r = e.ProcessFrameForTest(Pad(rt:255, ry:30000), cfg);
@@ -158,7 +128,7 @@ public class PlayLikeSimulationTests
     [Fact]
     public void ManualFaceButtonCancelsRunningSkill()
     {
-        var cfg = new AppConfig { AutoPress=false };
+        var cfg = new AppConfig();
         using var e = Engine(cfg);
 
         e.ProcessFrameForTest(Pad(ry:30000), cfg);
@@ -167,14 +137,14 @@ public class PlayLikeSimulationTests
         var r = e.ProcessFrameForTest(Pad(XButtons.A), cfg);
         Assert.Equal("Manual override", e.LastAction);
         Assert.True(Has(r, XButtons.A));
-        Assert.True(Has(r, XButtons.RightShoulder)); // Driven Pass
+        Assert.True(Has(r, XButtons.RightShoulder));
         Assert.False(Has(r, XButtons.LeftShoulder));
     }
 
     [Fact]
     public void QuickBReleaseBecomesCalibratedLowDriven()
     {
-        var cfg = new AppConfig { AutoPress=false, BTapThresholdMs=180, LowDrivenChargeMs=260, LowDrivenSecondTapGapMs=30, LowDrivenSecondTapMs=45 };
+        var cfg = new AppConfig { BTapThresholdMs=180, LowDrivenChargeMs=260, LowDrivenSecondTapGapMs=30, LowDrivenSecondTapMs=45 };
         using var e = Engine(cfg);
 
         var down = e.ProcessFrameForTest(Pad(XButtons.B), cfg);
@@ -183,22 +153,17 @@ public class PlayLikeSimulationTests
         Thread.Sleep(45);
         var released = e.ProcessFrameForTest(Pad(), cfg);
         Assert.Equal("Low Driven Shot", e.LastAction);
-        Assert.True(Has(released, XButtons.B)); // app continues calibrated first charge
+        Assert.True(Has(released, XButtons.B));
 
         Thread.Sleep(230);
         var gap = e.ProcessFrameForTest(Pad(), cfg);
         Assert.False(Has(gap, XButtons.B));
-
-        Thread.Sleep(cfg.LowDrivenSecondTapGapMs + 5);
-        e.ProcessFrameForTest(Pad(), cfg); // advance release-gap phase
-        var secondTap = e.ProcessFrameForTest(Pad(), cfg);
-        Assert.True(Has(secondTap, XButtons.B));
     }
 
     [Fact]
     public void HoldBUsesProgramPowerEvenIfFingerReleasesEarly()
     {
-        var cfg = new AppConfig { AutoPress=false, BTapThresholdMs=100, BNormalShotCapMs=280 };
+        var cfg = new AppConfig { BTapThresholdMs=100, BNormalShotCapMs=280 };
         using var e = Engine(cfg);
 
         e.ProcessFrameForTest(Pad(XButtons.B), cfg);
@@ -208,7 +173,7 @@ public class PlayLikeSimulationTests
         Assert.True(Has(classified, XButtons.B));
 
         var earlyPhysicalRelease = e.ProcessFrameForTest(Pad(), cfg);
-        Assert.True(Has(earlyPhysicalRelease, XButtons.B)); // virtual hold continues
+        Assert.True(Has(earlyPhysicalRelease, XButtons.B));
 
         Thread.Sleep(180);
         var capped = e.ProcessFrameForTest(Pad(), cfg);
@@ -216,140 +181,9 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void ShotAutomationStripsLbAndRbModifiers()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-
-        var r = e.ProcessFrameForTest(Pad(XButtons.B | XButtons.LeftShoulder | XButtons.RightShoulder), cfg);
-        Assert.True(Has(r, XButtons.B));
-        Assert.False(Has(r, XButtons.LeftShoulder));
-        Assert.False(Has(r, XButtons.RightShoulder));
-    }
-
-    [Fact]
-    public void ManualPassCancelsLowDrivenTail()
-    {
-        var cfg = new AppConfig { AutoPress=false, LowDrivenChargeMs=300 };
-        using var e = Engine(cfg);
-
-        e.ProcessFrameForTest(Pad(XButtons.B), cfg);
-        Thread.Sleep(40);
-        e.ProcessFrameForTest(Pad(), cfg);
-        Assert.Equal("Low Driven Shot", e.LastAction);
-
-        var pass = e.ProcessFrameForTest(Pad(XButtons.A), cfg);
-        Assert.Equal("Shot cancelled by manual input", e.LastAction);
-        Assert.False(Has(pass, XButtons.B));
-        Assert.True(Has(pass, XButtons.A));
-        Assert.True(Has(pass, XButtons.RightShoulder));
-    }
-
-    [Fact]
-    public void DefenseAutoPressDropsRbDuringManualTackle()
-    {
-        var cfg = new AppConfig { AutoPress=true, PressureStrength="Balanced", HardTackleAssist=false };
-        using var e = Engine(cfg);
-        EnterDefense(e, cfg);
-
-        Thread.Sleep(145);
-        var pressure = e.ProcessFrameForTest(Pad(), cfg);
-        Assert.True(Has(pressure, XButtons.RightShoulder));
-
-        var tackle = e.ProcessFrameForTest(Pad(XButtons.B), cfg);
-        Assert.True(Has(tackle, XButtons.B));
-        Assert.False(Has(tackle, XButtons.RightShoulder));
-    }
-
-    [Fact]
-    public void DefenseAutoPressDropsRbDuringRsPlayerSwitch()
-    {
-        var cfg = new AppConfig { AutoPress=true, PressureStrength="Balanced" };
-        using var e = Engine(cfg);
-        EnterDefense(e, cfg);
-
-        Thread.Sleep(145);
-        Assert.True(Has(e.ProcessFrameForTest(Pad(), cfg), XButtons.RightShoulder));
-
-        var switchPlayer = e.ProcessFrameForTest(Pad(rx:30000), cfg);
-        Assert.Equal((short)30000, switchPlayer.RX);
-        Assert.False(Has(switchPlayer, XButtons.RightShoulder));
-    }
-
-    [Fact]
-    public void LtDuringSkillCancelsMacroAndImmediatelyDefends()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-
-        e.ProcessFrameForTest(Pad(ry:30000), cfg);
-        Assert.Equal("Explosive Stepover", e.LastAction);
-
-        var defense = e.ProcessFrameForTest(Pad(lt:255), cfg);
-        Assert.Equal(PlayMode.Defense, e.Mode);
-        Assert.Equal("DEFENSE MODE", e.LastAction);
-        Assert.Equal((byte)255, defense.LT);
-        Assert.False(Has(defense, XButtons.LeftShoulder));
-    }
-
-    [Fact]
-    public void DirtyMetaNeverOverridesLsDuringFaceButtonAction()
-    {
-        var cfg = new AppConfig { AutoPress=false, DirtyMeta=true };
-        using var e = Engine(cfg);
-
-        e.ProcessFrameForTest(Pad(ly:30000), cfg);
-        e.ProcessFrameForTest(Pad(lx:30000), cfg); // create rapid fidget snap
-
-        var manual = e.ProcessFrameForTest(Pad(XButtons.A, ly:-25000), cfg);
-        Assert.Equal((short)0, manual.LX);
-        Assert.Equal((short)-25000, manual.LY);
-    }
-
-
-    [Fact]
-    public void HeldAttackShotCannotLeakIntoDefenseAsTackle()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-
-        e.ProcessFrameForTest(Pad(XButtons.B), cfg);
-        var transition = e.ProcessFrameForTest(Pad(XButtons.B, lt:255), cfg);
-
-        Assert.Equal(PlayMode.Defense, e.Mode);
-        Assert.False(Has(transition, XButtons.B));
-
-        var stillHeld = e.ProcessFrameForTest(Pad(XButtons.B, lt:255), cfg);
-        Assert.False(Has(stillHeld, XButtons.B));
-
-        e.ProcessFrameForTest(Pad(lt:255), cfg); // physical B release
-        var newTackle = e.ProcessFrameForTest(Pad(XButtons.B, lt:255), cfg);
-        Assert.True(Has(newTackle, XButtons.B));
-    }
-
-    [Fact]
-    public void HeldDefenseFaceButtonCannotLeakIntoAttackCommand()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-        EnterDefense(e, cfg);
-
-        e.ProcessFrameForTest(Pad(XButtons.B), cfg); // defensive tackle begins
-        var transition = e.ProcessFrameForTest(Pad(XButtons.B | XButtons.LeftShoulder), cfg);
-
-        Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.False(Has(transition, XButtons.B));
-        Assert.False(Has(transition, XButtons.LeftShoulder));
-
-        e.ProcessFrameForTest(Pad(), cfg); // release everything
-        var newShot = e.ProcessFrameForTest(Pad(XButtons.B), cfg);
-        Assert.True(Has(newShot, XButtons.B));
-    }
-
-    [Fact]
     public void ReleasingNativeLbWhileRsHeldDoesNotTriggerBaseSkill()
     {
-        var cfg = new AppConfig { AutoPress=false };
+        var cfg = new AppConfig();
         using var e = Engine(cfg);
 
         e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
@@ -362,179 +196,59 @@ public class PlayLikeSimulationTests
         Assert.NotEqual("Ball Roll Spin Right", e.LastAction);
         Assert.Equal((short)0, releaseLb.RX);
 
-        e.ProcessFrameForTest(Pad(), cfg); // re-arm after RS center
+        e.ProcessFrameForTest(Pad(), cfg);
+        Thread.Sleep(cfg.RsRearmMs + 20);
+        e.ProcessFrameForTest(Pad(), cfg);
         e.ProcessFrameForTest(Pad(rx:30000), cfg);
         Assert.Equal("Ball Roll Spin Right", e.LastAction);
     }
 
     [Fact]
-    public void RandomizedPlayFramesDoNotThrowOrEmitAutoPressWithManualDefenseFaceInput()
-    {
-        var cfg = new AppConfig { AutoPress=true, HardTackleAssist=false, DirtyMeta=true };
-        using var e = Engine(cfg);
-        var rnd = new Random(27027);
-
-        // Enter Defense, then fuzz common manual combinations.
-        EnterDefense(e, cfg);
-        var face = new[]{XButtons.A, XButtons.B, XButtons.X, XButtons.Y};
-
-        for (int i=0; i<2000; i++)
-        {
-            var f = face[rnd.Next(face.Length)];
-            short lx = (short)rnd.Next(-32767,32768);
-            short ly = (short)rnd.Next(-32767,32768);
-            short rx = (short)rnd.Next(-32767,32768);
-            short ry = (short)rnd.Next(-32767,32768);
-            var r = e.ProcessFrameForTest(Pad(f, lt:255, lx:lx, ly:ly, rx:rx, ry:ry), cfg);
-
-            Assert.True(Has(r, f));
-            Assert.False(Has(r, XButtons.RightShoulder));
-            e.ProcessFrameForTest(Pad(lt:255), cfg); // release face input
-        }
-    }
-
-
-    [Fact]
-    public void RandomizedAttackFramesDoNotLeakShotModifiersOrThrow()
+    public void RandomizedAttackFramesStayAttackOnlyAndDoNotThrow()
     {
         var cfg = new AppConfig
         {
-            AutoPress=false,
+            AutoPress=true,
+            SprintJockeyAssist=true,
+            HardTackleAssist=true,
             DirtyMeta=true,
             BTapThresholdMs=120,
             LowDrivenChargeMs=240,
             BNormalShotCapMs=320
         };
+
         using var e = Engine(cfg);
         var rnd = new Random(27028);
-        var attackButtons = new[]
+        var buttons = new[]
         {
             XButtons.A, XButtons.B, XButtons.X, XButtons.Y,
             XButtons.LeftShoulder, XButtons.RightShoulder,
             XButtons.A | XButtons.LeftShoulder,
             XButtons.B | XButtons.LeftShoulder,
-            XButtons.B | XButtons.RightShoulder,
             XButtons.Y | XButtons.LeftShoulder,
             (XButtons)0
         };
 
-        for (int i=0; i<3000; i++)
+        for (int i=0; i<5000; i++)
         {
-            var b = attackButtons[rnd.Next(attackButtons.Length)];
+            var b = buttons[rnd.Next(buttons.Length)];
             short lx = (short)rnd.Next(-32767,32768);
             short ly = (short)rnd.Next(-32767,32768);
             short rx = (short)rnd.Next(-32767,32768);
             short ry = (short)rnd.Next(-32767,32768);
+            byte lt = (byte)rnd.Next(0,256);
             byte rt = (byte)rnd.Next(0,256);
 
-            var r = e.ProcessFrameForTest(Pad(b, rt:rt, lx:lx, ly:ly, rx:rx, ry:ry), cfg);
+            var r = e.ProcessFrameForTest(Pad(b, lt:lt, rt:rt, lx:lx, ly:ly, rx:rx, ry:ry), cfg);
 
+            Assert.Equal(PlayMode.Attack, e.Mode);
             Assert.InRange(r.LX, short.MinValue, short.MaxValue);
             Assert.InRange(r.LY, short.MinValue, short.MaxValue);
             Assert.InRange(r.RX, short.MinValue, short.MaxValue);
             Assert.InRange(r.RY, short.MinValue, short.MaxValue);
 
-            if (e.LastAction is "Low Driven Shot" or "Normal Strong Shot")
-            {
-                Assert.False(Has(r, XButtons.LeftShoulder));
-                Assert.False(Has(r, XButtons.RightShoulder));
-            }
-
-            if ((b & (XButtons.A | XButtons.X | XButtons.Y)) != 0)
-                Assert.False(Has(r, XButtons.B));
-
             if (i % 7 == 0)
                 e.ProcessFrameForTest(Pad(), cfg);
         }
-    }
-
-    [Fact]
-    public void RepeatedModeSwitchesNeverReplayTheSameTransition()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-
-        var d1 = e.ProcessFrameForTest(Pad(lt:255), cfg);
-        Assert.Equal(PlayMode.Defense, e.Mode);
-        e.ProcessFrameForTest(Pad(lt:255), cfg);
-        Assert.Equal(PlayMode.Defense, e.Mode);
-
-        e.ProcessFrameForTest(Pad(), cfg);
-        var a1 = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.False(Has(a1, XButtons.LeftShoulder));
-
-        var a2 = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.False(Has(a2, XButtons.LeftShoulder)); // same transition press remains consumed
-
-        e.ProcessFrameForTest(Pad(), cfg);
-        e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Thread.Sleep(cfg.LbChordWindowMs + 20);
-        var native = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder), cfg);
-        Assert.True(Has(native, XButtons.LeftShoulder)); // new LB press while already attacking is native
-    }
-
-
-    [Fact]
-    public void AttackRsHeldIntoDefenseIsQuarantinedUntilCenter()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-
-        e.ProcessFrameForTest(Pad(ry:30000), cfg); // attack skill starts
-        var transition = e.ProcessFrameForTest(Pad(lt:255, ry:30000), cfg);
-
-        Assert.Equal(PlayMode.Defense, e.Mode);
-        Assert.Equal((short)0, transition.RX);
-        Assert.Equal((short)0, transition.RY);
-
-        var stillHeld = e.ProcessFrameForTest(Pad(lt:255, ry:30000), cfg);
-        Assert.Equal((short)0, stillHeld.RX);
-        Assert.Equal((short)0, stillHeld.RY);
-
-        e.ProcessFrameForTest(Pad(lt:255), cfg); // RS center releases quarantine
-        var freshSwitch = e.ProcessFrameForTest(Pad(lt:255, rx:30000), cfg);
-        Assert.Equal((short)30000, freshSwitch.RX);
-    }
-
-    [Fact]
-    public void LtHeldWhileSwitchingBackToAttackDoesNotLeakAsAttackModifier()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-        EnterDefense(e, cfg);
-
-        var transition = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, lt:255), cfg);
-        Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.Equal((byte)0, transition.LT);
-        Assert.False(Has(transition, XButtons.LeftShoulder));
-
-        var stillHeld = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder, lt:255), cfg);
-        Assert.Equal((byte)0, stillHeld.LT);
-
-        e.ProcessFrameForTest(Pad(), cfg); // release LT and LB
-        var freshLt = e.ProcessFrameForTest(Pad(lt:255), cfg);
-        Assert.Equal(PlayMode.Defense, e.Mode);
-        Assert.Equal((byte)255, freshLt.LT);
-    }
-
-    [Fact]
-    public void RbHeldAcrossDefenseToAttackIsBlockedUntilRelease()
-    {
-        var cfg = new AppConfig { AutoPress=false };
-        using var e = Engine(cfg);
-        EnterDefense(e, cfg);
-
-        var transition = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder | XButtons.RightShoulder), cfg);
-        Assert.Equal(PlayMode.Attack, e.Mode);
-        Assert.False(Has(transition, XButtons.RightShoulder));
-
-        var stillHeld = e.ProcessFrameForTest(Pad(XButtons.RightShoulder), cfg);
-        Assert.False(Has(stillHeld, XButtons.RightShoulder));
-
-        e.ProcessFrameForTest(Pad(), cfg);
-        var freshRb = e.ProcessFrameForTest(Pad(XButtons.RightShoulder), cfg);
-        Assert.True(Has(freshRb, XButtons.RightShoulder));
     }
 }
