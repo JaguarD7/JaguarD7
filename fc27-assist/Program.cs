@@ -333,6 +333,7 @@ public sealed class ControllerEngine : IDisposable
     private bool _bActive;
     private long _bStart;
     private bool _bCapped;
+    private bool _bNormalMode;
     private bool _lowDrivenTail;
     private int _lowDrivenTailPhase;
     private long _lowDrivenPhaseStart;
@@ -343,6 +344,8 @@ public sealed class ControllerEngine : IDisposable
     private long _lastLsAngleAt;
     private long _fidgetSnapUntil;
     private short _snapLX, _snapLY;
+    private long _lbDownAt;
+    private bool _lbChordConsumed;
 
     public PlayMode Mode { get; private set; } = PlayMode.Attack;
     public bool Connected => _controllerConnected;
@@ -425,7 +428,14 @@ public sealed class ControllerEngine : IDisposable
             LastPhysical = p;
 
             if (p.LeftTrigger >= 28) SetMode(PlayMode.Defense);
-            if (Rising(p.Buttons, _prevButtons, XButtons.LeftShoulder)) SetMode(PlayMode.Attack);
+            if (Rising(p.Buttons, _prevButtons, XButtons.LeftShoulder))
+            {
+                _lbDownAt = Stopwatch.GetTimestamp();
+                _lbChordConsumed = false;
+                SetMode(PlayMode.Attack);
+            }
+            if (!Btn(p.Buttons, XButtons.LeftShoulder) && Btn(_prevButtons, XButtons.LeftShoulder))
+                _lbChordConsumed = false;
 
             UpdateFacing(p);
             var r = new VirtualReport { Buttons=p.Buttons, LT=p.LeftTrigger, RT=p.RightTrigger, LX=p.ThumbLX, LY=p.ThumbLY, RX=p.ThumbRX, RY=p.ThumbRY };
@@ -498,11 +508,19 @@ public sealed class ControllerEngine : IDisposable
             string key = (lb ? "LB_RS_" : "RS_") + dir;
             if (cfg.SkillMap.TryGetValue(key, out var skillName))
             {
+                if (lb) _lbChordConsumed = true;
                 var skill = SkillLibrary.Get(skillName);
                 _macro.Start(skill.Name, skill.Build(cfg.SkillStepMs), _facingRad);
                 LastAction = skill.Name;
                 _rsLatched = true;
             }
+        }
+
+        if (Btn(p.Buttons, XButtons.LeftShoulder))
+        {
+            var lbAge = _lbDownAt == 0 ? double.MaxValue : MsSince(_lbDownAt);
+            if (_lbChordConsumed || lbAge < cfg.LbChordWindowMs)
+                r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.LeftShoulder);
         }
 
         if (_macro.Active) return;
