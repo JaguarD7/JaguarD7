@@ -986,6 +986,8 @@ public sealed class ControllerEngine : IDisposable
     private long _lastVirtualRetry;
     private long _lastLoopHeartbeat;
     private volatile bool _assistEnabled;
+    private bool _manualNormalShotActive;
+    private bool _skipDirtyThisFrame;
     private System.Threading.Timer? _watchdog;
 
     public PlayMode Mode { get; private set; } = PlayMode.Attack;
@@ -1295,6 +1297,7 @@ public sealed class ControllerEngine : IDisposable
     {
         AppConfig cfg = cfgOverride ?? _cfg;
         LastPhysical = p;
+        _skipDirtyThisFrame = false;
 
         bool assist = cfgOverride is not null ? cfg.DirtyMeta : _assistEnabled;
         if (!assist)
@@ -1365,7 +1368,8 @@ public sealed class ControllerEngine : IDisposable
             r.LY = p.ThumbLY;
         }
 
-        ApplyDirtyMeta(p, r, cfg);
+        if (!_skipDirtyThisFrame)
+            ApplyDirtyMeta(p, r, cfg);
 
         _prevButtons = p.Buttons;
         _lastPhysicalRsMagnitude = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
@@ -1396,6 +1400,8 @@ public sealed class ControllerEngine : IDisposable
         _shotAimLX = 0;
         _shotAimLY = 0;
         _shotAimLatched = false;
+        _manualNormalShotActive = false;
+        _skipDirtyThisFrame = false;
         _pressOn = false;
         _pressPhaseStart = 0;
         _dirtyBoostUntil = 0;
@@ -1595,6 +1601,19 @@ public sealed class ControllerEngine : IDisposable
         bool b = Btn(p.Buttons, XButtons.B);
         bool bRise = Rising(p.Buttons, _prevButtons, XButtons.B);
 
+        if (_manualNormalShotActive)
+        {
+            // Keep every frame of the manual normal shot raw, including the exact
+            // B-release frame where the game samples the final shot direction.
+            _skipDirtyThisFrame = true;
+            if (!b)
+            {
+                _manualNormalShotActive = false;
+                LastAction = "Manual Normal Shot";
+            }
+            return;
+        }
+
         if (bRise)
         {
             _bActive = true;
@@ -1611,23 +1630,22 @@ public sealed class ControllerEngine : IDisposable
 
             if (b)
             {
-                // Before the tap threshold, B is passed through exactly as the user holds it.
-                // If the hold crosses the threshold, it becomes a completely manual normal shot.
                 TrackShotAim(p, false);
 
                 if (held >= cfg.BTapThresholdMs)
                 {
                     _bActive = false;
                     _bNormalMode = true;
+                    _manualNormalShotActive = true;
                     _shotAimLatched = false;
+                    _skipDirtyThisFrame = true;
                     LastAction = "Manual Normal Shot";
-                    return; // leave B/LS/modifiers exactly as they came from the physical pad
+                    return;
                 }
 
-                return; // physical B remains untouched in r
+                return;
             }
 
-            // Released before the threshold = quick tap -> convert to Low Driven only.
             TrackShotAim(p, false);
             _bActive = false;
             _bNormalMode = false;
