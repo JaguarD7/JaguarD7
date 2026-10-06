@@ -1439,15 +1439,17 @@ public sealed class ControllerEngine : IDisposable
     {
         double rsMag = Math.Sqrt((double)p.ThumbRX*p.ThumbRX + (double)p.ThumbRY*p.ThumbRY);
         bool lbHeld = Btn(p.Buttons, XButtons.LeftShoulder);
+        bool faceActive = ConflictRules.ManualFaceOverride(p.Buttons);
         long now = Stopwatch.GetTimestamp();
         double lbAge = _lbDownAt == 0 ? double.MaxValue : MsSince(_lbDownAt);
 
-        // Normal LB player switching is delayed only by the short chord-intent window.
-        // A quick LB tap is replayed as a short native tap if no RS skill was requested.
+        if (lbHeld && faceActive)
+            _lbRawPassed = true;
+
         if (lbHeld && !_lbChordConsumed && !_lbRawPassed && lbAge >= cfg.LbChordWindowMs)
             _lbRawPassed = true;
 
-        if (lbHeld && !_lbRawPassed && !_lbChordConsumed)
+        if (lbHeld && !_lbRawPassed && !_lbChordConsumed && !faceActive)
             r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.LeftShoulder);
 
         if (!lbHeld && _lbSyntheticTapUntil > now)
@@ -1482,7 +1484,7 @@ public sealed class ControllerEngine : IDisposable
         r.RX = 0;
         r.RY = 0;
 
-        if (!_rsLatched && !_rsNeedsCenter && !_macro.Active &&
+        if (!faceActive && !_rsLatched && !_rsNeedsCenter && !_macro.Active &&
             rsMag >= cfg.RsTriggerDeadzone && SkillReady(cfg))
         {
             var dir = Cardinal(p.ThumbRX, p.ThumbRY);
