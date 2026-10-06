@@ -158,6 +158,8 @@ public sealed class AppConfig
     public int SkillCooldownMs { get; set; } = 60;
     public int BTapThresholdMs { get; set; } = 145;
     public int LowDrivenChargeMs { get; set; } = 230;
+    // Legacy fields kept only so older config.json files still deserialize safely.
+    // Normal shots are now fully manual and do not use these values.
     public int BNormalShotCapMs { get; set; } = 340;
     public int NormalShotAimMinMagnitude { get; set; } = 23000;
     public int LowDrivenSecondTapGapMs { get; set; } = 20;
@@ -204,8 +206,7 @@ public sealed class AppConfig
         if (LbChordWindowMs == 85 || LbChordWindowMs == 65) LbChordWindowMs = 55;
         if (BTapThresholdMs == 180 || BTapThresholdMs == 160) BTapThresholdMs = 145;
         if (LowDrivenChargeMs == 420 || LowDrivenChargeMs == 250) LowDrivenChargeMs = 230;
-        if (BNormalShotCapMs == 620 || BNormalShotCapMs == 430 || BNormalShotCapMs == 470) BNormalShotCapMs = 340;
-        NormalShotAimMinMagnitude = Math.Clamp(NormalShotAimMinMagnitude <= 0 ? 23000 : NormalShotAimMinMagnitude, 12000, 30000);
+        // Normal-shot power and aim are fully manual now; legacy values are ignored.
         if (LowDrivenSecondTapGapMs == 30 || LowDrivenSecondTapGapMs == 22) LowDrivenSecondTapGapMs = 20;
         if (LowDrivenSecondTapMs == 45 || LowDrivenSecondTapMs == 34) LowDrivenSecondTapMs = 32;
         if (MoveResponsePercent < 100) MoveResponsePercent = 118;
@@ -1541,21 +1542,14 @@ public sealed class ControllerEngine : IDisposable
                 LastAction = "Fast Driven Ground Pass";
         }
 
-        if (yPressed)
-        {
-            // Stronger precision ground through ball: RB + Y on Classic controls.
-            // No synthetic hold; power still follows the user's physical Y duration.
-            r.Buttons = (ushort)((r.Buttons | (ushort)(XButtons.Y | XButtons.RightShoulder)) &
-                                 ~(ushort)XButtons.LeftShoulder);
-            if (Rising(p.Buttons, _prevButtons, XButtons.Y))
-                LastAction = "Precision Ground Through Pass";
-        }
+        // Y is intentionally untouched: through-pass direction, power and duration
+        // are 100% controlled by the physical controller.
 
         HandleShotB(p, r, cfg);
 
-        // Shot type/power are automated, but LS aim stays physical. Strip shoulder
-        // modifiers during the B state machine so the shot cannot turn into chip/finesse.
-        if (_bActive || _lowDrivenTail)
+        // Only the automatic Low Driven tail owns shot modifiers.
+        // A held/normal B shot remains fully physical and untouched.
+        if (_lowDrivenTail)
             r.Buttons = (ushort)(r.Buttons & ~((ushort)XButtons.LeftShoulder | (ushort)XButtons.RightShoulder));
     }
 
@@ -1594,39 +1588,14 @@ public sealed class ControllerEngine : IDisposable
         r.LY = _shotAimLY;
     }
 
-    private void ApplyLatchedNormalShotAim(VirtualReport r, AppConfig cfg)
-    {
-        if (!_shotAimLatched) return;
-
-        double mag = Math.Sqrt((double)_shotAimLX * _shotAimLX + (double)_shotAimLY * _shotAimLY);
-        if (mag < 4500)
-        {
-            // No meaningful direction from the user: do not invent one.
-            r.LX = _shotAimLX;
-            r.LY = _shotAimLY;
-            return;
-        }
-
-        // Keep the exact user-selected angle, but make a weak LS aim unambiguous
-        // for the game's shot-direction sampler.
-        double target = Math.Max(mag, Math.Clamp(cfg.NormalShotAimMinMagnitude, 12000, 30000));
-        target = Math.Min(32767.0, target);
-        double scale = target / mag;
-
-        r.LX = (short)Math.Clamp((int)Math.Round(_shotAimLX * scale), short.MinValue, short.MaxValue);
-        r.LY = (short)Math.Clamp((int)Math.Round(_shotAimLY * scale), short.MinValue, short.MaxValue);
-    }
-
     private void HandleShotB(XInputGamepad p, VirtualReport r, AppConfig cfg)
     {
         bool b = Btn(p.Buttons, XButtons.B);
         bool bRise = Rising(p.Buttons, _prevButtons, XButtons.B);
-        bool bFall = !b && Btn(_prevButtons, XButtons.B);
 
         if (bRise)
         {
             _bActive = true;
-            _bCapped = false;
             _bNormalMode = false;
             _bStart = Stopwatch.GetTimestamp();
             _lowDrivenTail = false;
@@ -1634,84 +1603,42 @@ public sealed class ControllerEngine : IDisposable
             TrackShotAim(p, true);
         }
 
-        if (_bActive && b)
-        {
-            // While the user is physically holding B, their LS remains live and becomes
-            // the latest shot aim. The app never invents a shooting direction.
-            TrackShotAim(p, false);
-        }
-
-        // B timing is owned by the shot state machine.
-        r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.B);
-
         if (_bActive)
         {
             var held = MsSince(_bStart);
 
-            if (!_bNormalMode && b && held >= cfg.BTapThresholdMs)
+            if (b)
             {
-                _bNormalMode = true;
-                LastAction = "Normal Shot";
-            }
+                // Before the tap threshold, B is passed through exactly as the user holds it.
+                // If the hold crosses the threshold, it becomes a completely manual normal shot.
+                TrackShotAim(p, false);
 
-            if (!_bNormalMode)
-            {
-                if (b)
+                if (held >= cfg.BTapThresholdMs)
                 {
-                    // User is still deciding between quick Low Driven and normal shot.
-                    r.Buttons |= (ushort)XButtons.B;
-                }
-                else
-                {
-                    // Quick tap. Freeze the user's latest meaningful LS direction for the
-                    // short synthetic tail and second B tap.
-                    TrackShotAim(p, false);
                     _bActive = false;
-                    _lowDrivenTail = true;
-                    _lowDrivenTailPhase = 0;
-                    _lowDrivenPhaseStart = Stopwatch.GetTimestamp();
-                    LastAction = "Low Driven Shot";
-                    ApplyLatchedShotAim(r);
-                }
-            }
-            else
-            {
-                if (b)
-                {
-                    // Normal shot: aim follows the user's LS live while B is held.
-                    r.Buttons |= (ushort)XButtons.B;
-                }
-                else
-                {
-                    // If the user releases before the calibrated power cap, keep only the
-                    // B charge alive. The shot direction stays locked to their last LS aim.
-                    if (bFall)
-                        TrackShotAim(p, false);
-                    ApplyLatchedNormalShotAim(r, cfg);
-                    if (held < cfg.BNormalShotCapMs && !_bCapped)
-                    {
-                        r.Buttons |= (ushort)XButtons.B;
-                    }
-                    else
-                    {
-                        _bCapped = true;
-                        _bActive = false;
-                        _shotAimLatched = false;
-                    }
-                }
-
-                if (held >= cfg.BNormalShotCapMs)
-                {
-                    _bCapped = true;
-                    _bActive = false;
+                    _bNormalMode = true;
                     _shotAimLatched = false;
-                    r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.B);
+                    LastAction = "Manual Normal Shot";
+                    return; // leave B/LS/modifiers exactly as they came from the physical pad
                 }
+
+                return; // physical B remains untouched in r
             }
+
+            // Released before the threshold = quick tap -> convert to Low Driven only.
+            TrackShotAim(p, false);
+            _bActive = false;
+            _bNormalMode = false;
+            _lowDrivenTail = true;
+            _lowDrivenTailPhase = 0;
+            _lowDrivenPhaseStart = Stopwatch.GetTimestamp();
+            LastAction = "Low Driven Shot";
         }
 
         if (_lowDrivenTail)
         {
+            // Only Low Driven owns B and aim after the physical quick tap has ended.
+            r.Buttons = (ushort)(r.Buttons & ~(ushort)XButtons.B);
             ApplyLatchedShotAim(r);
             var totalCharge = MsSince(_bStart);
 
@@ -2105,8 +2032,8 @@ public sealed class MainForm : Form
             TextAlign=ContentAlignment.TopLeft,
             Padding=new Padding(4,10,4,4),
             Text=T(
-                $"B نقرة سريعة  →  Low Driven أرضي سريع ودقيق\nB ضغط مستمر  →  شوت عادي قريب من بارين ومضبوط (حد القوة {_cfg.BNormalShotCapMs}ms)\nاتجاه التسديد  →  LS منك فقط ويثبت وقت الإطلاق\nA  →  Driven Ground Pass سريع بدون تمديد\nY  →  Precision Ground Through (RB+Y) بنفس مدة ضغطتك\nالحركة  →  Agility Curve + Turn Boost بدون Skill Move\nبعد المهارة  →  Explosive Exit تلقائي قصير",
-                $"Quick B tap  →  fast accurate Low Driven ground shot\nHold B  →  calibrated normal shot around two bars (power cap {_cfg.BNormalShotCapMs}ms)\nShot direction  →  your LS only, locked at release\nA  →  Driven Ground Pass with no synthetic hold\nY  →  Precision Ground Through (RB+Y), using your physical press duration\nMovement  →  Agility Curve + Turn Boost without a skill move\nAfter a skill  →  short automatic Explosive Exit")
+                $"B نقرة سريعة  →  Low Driven أرضي سريع ودقيق\nB ضغط مستمر  →  شوت عادي 100% بيدك: القوة + الاتجاه + مدة الضغط\nA  →  Driven Ground Pass سريع بدون تمديد\nY  →  بينية طبيعية 100% بيدك بدون أي تدخل\nالحركة  →  Agility Curve + Turn Boost بدون Skill Move\nبعد المهارة  →  Explosive Exit تلقائي قصير",
+                $"Quick B tap  →  fast accurate Low Driven ground shot\nHold B  →  100% manual normal shot: power + aim + hold duration\nA  →  Driven Ground Pass with no synthetic hold\nY  →  100% native through pass with no app intervention\nMovement  →  Agility Curve + Turn Boost without a skill move\nAfter a skill  →  short automatic Explosive Exit")
         },0,1);
         shot.Controls.Add(shotLayout);
         root.Controls.Add(shot);
@@ -2302,24 +2229,22 @@ public sealed class MainForm : Form
     private Control BuildSettings()
     {
         var root=Stack();root.Controls.Add(Title(T("الإعدادات الدقيقة","Precision Settings"),T("لا تغيّر التوقيت إلا بعد الاختبار في Practice Arena.","Only tune timing after testing in Practice Arena.")));
-        var p=PanelCard(845);p.Controls.Add(BigLabel(T("التوقيت والإدخال","TIMING & INPUT")));
-        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=16,Padding=new Padding(0,12,0,0)};table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
+        var p=PanelCard(745);p.Controls.Add(BigLabel(T("التوقيت والإدخال","TIMING & INPUT")));
+        var table=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=14,Padding=new Padding(0,12,0,0)};table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
         AddNumeric(table,0,T("XInput Slot (0-3)","XInput Slot (0-3)"),_cfg.ControllerSlot,0,3,v=>_cfg.ControllerSlot=v);
         AddNumeric(table,1,T("RS Trigger Deadzone","RS Trigger Deadzone"),_cfg.RsTriggerDeadzone,10000,30000,v=>_cfg.RsTriggerDeadzone=v);
         AddNumeric(table,2,T("Skill Step (ms)","Skill Step (ms)"),_cfg.SkillStepMs,25,100,v=>_cfg.SkillStepMs=v);
         AddNumeric(table,3,T("Skill Cooldown (ms)","Skill Cooldown (ms)"),_cfg.SkillCooldownMs,60,300,v=>_cfg.SkillCooldownMs=v);
         AddNumeric(table,4,T("B Tap Threshold (ms)","B Tap Threshold (ms)"),_cfg.BTapThresholdMs,90,300,v=>_cfg.BTapThresholdMs=v);
         AddNumeric(table,5,T("Low Driven Charge (ms)","Low Driven Charge (ms)"),_cfg.LowDrivenChargeMs,220,700,v=>_cfg.LowDrivenChargeMs=v);
-        AddNumeric(table,6,T("Normal Shot Power Cap (ms)","Normal Shot Power Cap (ms)"),_cfg.BNormalShotCapMs,260,520,v=>_cfg.BNormalShotCapMs=v);
-        AddNumeric(table,7,T("دقة اتجاه الشوت العادي","Normal Shot Aim Strength"),_cfg.NormalShotAimMinMagnitude,12000,30000,v=>_cfg.NormalShotAimMinMagnitude=v);
-        AddNumeric(table,8,T("Low Driven Gap (ms)","Low Driven Gap (ms)"),_cfg.LowDrivenSecondTapGapMs,10,100,v=>_cfg.LowDrivenSecondTapGapMs=v);
-        AddNumeric(table,9,T("Low Driven 2nd Tap (ms)","Low Driven 2nd Tap (ms)"),_cfg.LowDrivenSecondTapMs,20,100,v=>_cfg.LowDrivenSecondTapMs=v);
-        AddNumeric(table,10,T("RS إعادة التسليح (ms)","RS Rearm Center (ms)"),_cfg.RsRearmMs,40,250,v=>_cfg.RsRearmMs=v);
-        AddNumeric(table,11,T("نافذة LB + RS (ms)","LB + RS Intent Window (ms)"),_cfg.LbChordWindowMs,40,120,v=>_cfg.LbChordWindowMs=v);
-        AddNumeric(table,12,T("استجابة الحركة %","Movement Response %"),_cfg.MoveResponsePercent,100,135,v=>_cfg.MoveResponsePercent=v);
-        AddNumeric(table,13,T("Turn Boost (ms)","Turn Boost (ms)"),_cfg.TurnBoostMs,20,90,v=>_cfg.TurnBoostMs=v);
-        AddNumeric(table,14,T("Explosive Exit (ms)","Explosive Exit (ms)"),_cfg.DirtyExitBoostMs,80,260,v=>_cfg.DirtyExitBoostMs=v);
-        AddNumeric(table,15,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,500,1000,v=>_cfg.InputLoopHz=v);
+        AddNumeric(table,6,T("Low Driven Gap (ms)","Low Driven Gap (ms)"),_cfg.LowDrivenSecondTapGapMs,10,100,v=>_cfg.LowDrivenSecondTapGapMs=v);
+        AddNumeric(table,7,T("Low Driven 2nd Tap (ms)","Low Driven 2nd Tap (ms)"),_cfg.LowDrivenSecondTapMs,20,100,v=>_cfg.LowDrivenSecondTapMs=v);
+        AddNumeric(table,8,T("RS إعادة التسليح (ms)","RS Rearm Center (ms)"),_cfg.RsRearmMs,40,250,v=>_cfg.RsRearmMs=v);
+        AddNumeric(table,9,T("نافذة LB + RS (ms)","LB + RS Intent Window (ms)"),_cfg.LbChordWindowMs,40,120,v=>_cfg.LbChordWindowMs=v);
+        AddNumeric(table,10,T("استجابة الحركة %","Movement Response %"),_cfg.MoveResponsePercent,100,135,v=>_cfg.MoveResponsePercent=v);
+        AddNumeric(table,11,T("Turn Boost (ms)","Turn Boost (ms)"),_cfg.TurnBoostMs,20,90,v=>_cfg.TurnBoostMs=v);
+        AddNumeric(table,12,T("Explosive Exit (ms)","Explosive Exit (ms)"),_cfg.DirtyExitBoostMs,80,260,v=>_cfg.DirtyExitBoostMs=v);
+        AddNumeric(table,13,T("Input Loop Hz","Input Loop Hz"),_cfg.InputLoopHz,500,1000,v=>_cfg.InputLoopHz=v);
         p.Controls.Add(table);root.Controls.Add(p);
         var buttons=PanelCard(135);
         var reset=new Button{Text=T("استعادة الإعدادات الافتراضية","RESET DEFAULTS"),Dock=DockStyle.Left,Width=220};StyleButton(reset,false);reset.Click+=(_,_)=>{var fresh=new AppConfig{Language=_cfg.Language};CopyConfig(fresh,_cfg);SaveAndRefresh("settings");};buttons.Controls.Add(reset);
