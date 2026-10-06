@@ -221,26 +221,25 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void YUsesPrecisionGroundThroughWithoutSyntheticHold()
+    public void YThroughPassIsCompletelyNative()
     {
         var cfg = new AppConfig();
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
         short lx = 17000, ly = 21000;
+        var buttons = XButtons.Y | XButtons.LeftShoulder;
         var pressed = e.ProcessFrameForTest(
-            Pad(XButtons.Y | XButtons.LeftShoulder, lx:lx, ly:ly), cfg);
+            Pad(buttons, lt:77, rt:133, lx:lx, ly:ly), cfg);
 
-        Assert.True(Has(pressed, XButtons.Y));
-        Assert.True(Has(pressed, XButtons.RightShoulder));
-        Assert.False(Has(pressed, XButtons.LeftShoulder));
+        Assert.Equal((ushort)buttons, pressed.Buttons);
+        Assert.Equal((byte)77, pressed.LT);
+        Assert.Equal((byte)133, pressed.RT);
         Assert.Equal(lx, pressed.LX);
         Assert.Equal(ly, pressed.LY);
-        Assert.Equal("Precision Ground Through Pass", e.LastAction);
 
         var released = e.ProcessFrameForTest(Pad(lx:lx, ly:ly), cfg);
         Assert.False(Has(released, XButtons.Y));
-        Assert.False(Has(released, XButtons.RightShoulder));
     }
 
     [Fact]
@@ -275,104 +274,91 @@ public class PlayLikeSimulationTests
     }
 
     [Fact]
-    public void NormalShotTracksLsWhileHeldThenLocksLastUserAim()
+    public void HeldBBecomesFullyManualNormalShot()
     {
-        var cfg = new AppConfig { BTapThresholdMs=100, BNormalShotCapMs=300 };
+        var cfg = new AppConfig { BTapThresholdMs=100 };
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        e.ProcessFrameForTest(Pad(XButtons.B, lx:-19000, ly:26000), cfg);
+        var first = e.ProcessFrameForTest(
+            Pad(XButtons.B | XButtons.LeftShoulder, rt:190, lx:-19000, ly:26000), cfg);
+        Assert.True(Has(first, XButtons.B));
+        Assert.True(Has(first, XButtons.LeftShoulder));
+        Assert.Equal((byte)190, first.RT);
+        Assert.Equal((short)-19000, first.LX);
+        Assert.Equal((short)26000, first.LY);
+
         Thread.Sleep(125);
 
-        // While B is still held, aim follows the physical LS live.
-        var held = e.ProcessFrameForTest(Pad(XButtons.B, lx:15000, ly:27000), cfg);
-        Assert.Equal("Normal Shot", e.LastAction);
+        var held = e.ProcessFrameForTest(
+            Pad(XButtons.B | XButtons.RightShoulder, rt:220, lx:15000, ly:27000), cfg);
+
+        Assert.Equal("Manual Normal Shot", e.LastAction);
         Assert.True(Has(held, XButtons.B));
+        Assert.True(Has(held, XButtons.RightShoulder));
+        Assert.Equal((byte)220, held.RT);
         Assert.Equal((short)15000, held.LX);
         Assert.Equal((short)27000, held.LY);
 
-        // Physical B release chooses/fixes the final user aim.
+        // Once classified as normal, releasing B is also fully physical.
         var released = e.ProcessFrameForTest(Pad(lx:-23000, ly:12000), cfg);
-        Assert.True(Has(released, XButtons.B));
+        Assert.False(Has(released, XButtons.B));
         Assert.Equal((short)-23000, released.LX);
         Assert.Equal((short)12000, released.LY);
-
-        // Later LS movement cannot randomly redirect the still-automated charge.
-        var tail = e.ProcessFrameForTest(Pad(lx:26000, ly:-15000), cfg);
-        Assert.Equal((short)-23000, tail.LX);
-        Assert.Equal((short)12000, tail.LY);
     }
 
     [Fact]
-    public void NormalShotUsesTwoBarPowerCapAndReleasesB()
+    public void NormalShotHasNoPowerCapOrAimAssist()
     {
         var cfg = new AppConfig
         {
-            DirtyMeta = true,
-            BTapThresholdMs = 100,
-            BNormalShotCapMs = 340
-        };
-        cfg.NormalizeAttackOnly();
-        using var e = Engine(cfg);
-
-        e.ProcessFrameForTest(Pad(XButtons.B, lx:12000, ly:18000), cfg);
-        Thread.Sleep(120);
-        e.ProcessFrameForTest(Pad(XButtons.B, lx:12000, ly:18000), cfg);
-
-        // Release physical B; app may finish the calibrated charge.
-        var release = e.ProcessFrameForTest(Pad(lx:12000, ly:18000), cfg);
-        Assert.True(Has(release, XButtons.B));
-
-        Thread.Sleep(240);
-        var capped = e.ProcessFrameForTest(Pad(lx:12000, ly:18000), cfg);
-        Assert.False(Has(capped, XButtons.B));
-    }
-
-    [Fact]
-    public void NormalShotAimStrengthPreservesUsersExactAngle()
-    {
-        var cfg = new AppConfig
-        {
-            DirtyMeta = true,
             BTapThresholdMs = 80,
-            BNormalShotCapMs = 340,
-            NormalShotAimMinMagnitude = 23000
+            BNormalShotCapMs = 1,              // legacy field must have no effect
+            NormalShotAimMinMagnitude = 30000  // legacy field must have no effect
         };
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        short lx = 6000, ly = 9000;
+        short lx = 5000, ly = 8000;
         e.ProcessFrameForTest(Pad(XButtons.B, lx:lx, ly:ly), cfg);
         Thread.Sleep(100);
-        e.ProcessFrameForTest(Pad(XButtons.B, lx:lx, ly:ly), cfg);
 
-        var r = e.ProcessFrameForTest(Pad(lx:lx, ly:ly), cfg);
+        // B remains held because the physical button is still held, regardless of legacy cap.
+        var held = e.ProcessFrameForTest(Pad(XButtons.B, lx:lx, ly:ly), cfg);
+        Assert.True(Has(held, XButtons.B));
+        Assert.Equal(lx, held.LX);
+        Assert.Equal(ly, held.LY);
 
-        double inputAngle = Math.Atan2(lx, ly);
-        double outputAngle = Math.Atan2(r.LX, r.LY);
-        double diff = Math.Abs(inputAngle - outputAngle);
-        if (diff > Math.PI) diff = Math.Abs(diff - Math.PI * 2);
-
-        double inputMag = Math.Sqrt((double)lx*lx + (double)ly*ly);
-        double outputMag = Math.Sqrt((double)r.LX*r.LX + (double)r.LY*r.LY);
-
-        Assert.InRange(diff, 0, 0.01);
-        Assert.True(outputMag >= inputMag);
-        Assert.InRange(outputMag, 22500, 23500);
+        Thread.Sleep(350);
+        var stillHeld = e.ProcessFrameForTest(Pad(XButtons.B, lx:-7000, ly:9000), cfg);
+        Assert.True(Has(stillHeld, XButtons.B));
+        Assert.Equal((short)-7000, stillHeld.LX);
+        Assert.Equal((short)9000, stillHeld.LY);
     }
 
     [Fact]
-    public void ShotAutomationStripsShoulderShotModifiers()
+    public void NormalShotKeepsPhysicalShoulderModifiersButLowDrivenTailOwnsThem()
     {
-        var cfg = new AppConfig();
+        var cfg = new AppConfig { BTapThresholdMs=100, LowDrivenChargeMs=230 };
         cfg.NormalizeAttackOnly();
         using var e = Engine(cfg);
 
-        var r = e.ProcessFrameForTest(Pad(XButtons.B | XButtons.LeftShoulder | XButtons.RightShoulder), cfg);
+        // During the physical hold, normal-shot modifiers stay native.
+        var physical = e.ProcessFrameForTest(
+            Pad(XButtons.B | XButtons.LeftShoulder | XButtons.RightShoulder), cfg);
+        Assert.True(Has(physical, XButtons.B));
+        Assert.True(Has(physical, XButtons.LeftShoulder));
+        Assert.True(Has(physical, XButtons.RightShoulder));
 
-        Assert.True(Has(r, XButtons.B));
-        Assert.False(Has(r, XButtons.LeftShoulder));
-        Assert.False(Has(r, XButtons.RightShoulder));
+        // Reset and do a quick tap so the automatic Low Driven tail begins.
+        e.ResetInputStateForTest();
+        e.ProcessFrameForTest(Pad(XButtons.B | XButtons.LeftShoulder | XButtons.RightShoulder), cfg);
+        Thread.Sleep(30);
+        var tail = e.ProcessFrameForTest(Pad(XButtons.LeftShoulder | XButtons.RightShoulder), cfg);
+
+        Assert.Equal("Low Driven Shot", e.LastAction);
+        Assert.False(Has(tail, XButtons.LeftShoulder));
+        Assert.False(Has(tail, XButtons.RightShoulder));
     }
 
     [Fact]
