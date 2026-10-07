@@ -1,0 +1,39 @@
+name: Build Rose Launcher 105
+on:
+  push:
+    branches: [rose-rpf-engine]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rose-rpf-engine
+      - name: Compile launcher
+        shell: pwsh
+        run: |
+          $csc = (Get-ChildItem "$env:WINDIR\Microsoft.NET\Framework64" -Directory |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName 'csc.exe' } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1)
+          if (-not $csc) { throw "csc.exe not found" }
+          New-Item -ItemType Directory -Force -Path releases | Out-Null
+          & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32manifest:rose-launcher/app.manifest /reference:System.Windows.Forms.dll /out:releases/Rose_Setup_v1.0.5.exe rose-launcher/Program.cs
+          if ($LASTEXITCODE -ne 0) { throw "csc failed" }
+          Get-Item releases/Rose_Setup_v1.0.5.exe | Format-List Name,Length
+          Get-FileHash releases/Rose_Setup_v1.0.5.exe -Algorithm SHA256 | Format-List
+      - name: Commit launcher
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/Rose_Setup_v1.0.5.exe
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m "Build Rose launcher v1.0.5 [skip ci]"
+          git push origin HEAD:rose-rpf-engine
