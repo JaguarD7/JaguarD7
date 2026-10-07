@@ -62,7 +62,10 @@ jobs:
             Select-Object -First 1)
           if (-not $csc) { throw "csc.exe not found" }
           New-Item -ItemType Directory -Force -Path releases | Out-Null
-          & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32manifest:rose-launcher/app.manifest /reference:System.Windows.Forms.dll /out:releases/Rose_Setup_v1.0.5.exe rose-launcher/Program.cs
+          $src = Join-Path $PWD 'rose-launcher\Program.cs'
+          $manifest = Join-Path $PWD 'rose-launcher\app.manifest'
+          $out = Join-Path $PWD 'releases\Rose_Setup_v1.0.5.exe'
+          & $csc /nologo /target:winexe /platform:x64 /optimize+ "/win32manifest:$manifest" /reference:System.Windows.Forms.dll "/out:$out" "$src"
           if ($LASTEXITCODE -ne 0) { throw "csc failed" }
           if (!(Test-Path "releases/Rose_Setup_v1.0.5.exe")) { throw "Launcher build missing" }
           Get-FileHash releases/Rose_Setup_v1.0.5.exe -Algorithm SHA256 | Format-List
