@@ -49,6 +49,36 @@ jobs:
           dotnet publish rose-packer/RoseRpfPacker.csproj -c Release -r win-x64 --self-contained false -o portable/packer
           if (!(Test-Path "portable/packer/RoseRpfPacker.dll")) { throw "RoseRpfPacker build missing" }
 
+      - name: Validate FiveM RPF package format
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force rpf-test -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path rpf-test/src/content | Out-Null
+          @'
+<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.2" id="{1A53DC0B-6CD4-4E3C-A80C-3BC193B06711}" target="Five">
+  <metadata>
+    <name>Rose Package Format Test</name>
+    <version><major>1</major><minor>0</minor></version>
+    <author><displayName>Rose</displayName></author>
+    <description><![CDATA[Test]]></description>
+  </metadata>
+  <colors><headerBackground useBlackTextColor="False">$FF202020</headerBackground><iconBackground>$FF555555</iconBackground></colors>
+  <content></content>
+</package>
+'@ | Set-Content -Path rpf-test/src/assembly.xml -Encoding UTF8
+          'test' | Set-Content -Path rpf-test/src/content/test.txt -Encoding UTF8
+          dotnet portable/packer/RoseRpfPacker.dll rpf-test/src rpf-test/Rose_Test.rpf
+          if ($LASTEXITCODE -ne 0) { throw "RoseRpfPacker format test failed" }
+          $head = [IO.File]::ReadAllBytes("$PWD\rpf-test\Rose_Test.rpf")[0..3]
+          if ([Text.Encoding]::ASCII.GetString($head) -ne 'RPF7') { throw "Rose RPF header is not RPF7" }
+
+          $fiveMApp = Join-Path $env:LOCALAPPDATA 'FiveM\FiveM.app'
+          New-Item -ItemType Directory -Force -Path $fiveMApp | Out-Null
+          dotnet portable/engine/CodeWalker.OIVInstaller.dll --install "$PWD\rpf-test\Rose_Test.rpf"
+          if ($LASTEXITCODE -ne 0) { throw "CodeWalker did not accept Rose FiveM RPF package" }
+          if (!(Test-Path (Join-Path $fiveMApp 'mods\Rose_Test.rpf'))) { throw "FiveM mods package copy validation failed" }
+
       - name: Download portable .NET 8 runtimes
         shell: pwsh
         run: |
