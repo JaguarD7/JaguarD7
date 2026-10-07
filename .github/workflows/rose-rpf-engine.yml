@@ -50,11 +50,15 @@ jobs:
       - name: Download portable .NET 8 Desktop Runtime
         shell: pwsh
         run: |
-          Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\dotnet-install.ps1 -Channel 8.0 -Runtime windowsdesktop -Architecture x64 -InstallDir "$PWD\portable\runtime" -NoPath
-          # dotnet-install.ps1 can return a nonzero host exit after a successful portable extraction.
-          # The runtime files are the authoritative success check.
-          if (!(Test-Path "portable/runtime/dotnet.exe")) { throw "Portable dotnet.exe missing (host exit $LASTEXITCODE)" }
+          $runtimeZip = Join-Path $PWD 'windowsdesktop-runtime-8.0.31-win-x64.zip'
+          $runtimeUrl = 'https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/8.0.31/windowsdesktop-runtime-8.0.31-win-x64.zip'
+          Invoke-WebRequest -Uri $runtimeUrl -OutFile $runtimeZip
+          Expand-Archive -LiteralPath $runtimeZip -DestinationPath "$PWD\portable\runtime" -Force
+          Remove-Item $runtimeZip -Force
+          if (!(Test-Path "$PWD\portable\runtime\dotnet.exe")) {
+            Get-ChildItem "$PWD\portable\runtime" -Force -Recurse | Select-Object -First 80 FullName
+            throw "Portable dotnet.exe missing after direct runtime extraction"
+          }
           & "$PWD\portable\runtime\dotnet.exe" --list-runtimes
 
       - name: Pack portable bundle
