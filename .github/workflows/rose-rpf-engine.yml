@@ -47,19 +47,21 @@ jobs:
           dotnet publish cw/CodeWalker.OIVInstaller/CodeWalker.OIVInstaller.csproj -c Release -r win-x64 --self-contained false -o portable/engine
           if (!(Test-Path "portable/engine/CodeWalker.OIVInstaller.dll")) { throw "Engine build missing" }
 
-      - name: Download portable .NET 8 Desktop Runtime
+      - name: Download portable .NET 8 runtimes
         shell: pwsh
         run: |
-          $runtimeZip = Join-Path $PWD 'windowsdesktop-runtime-8.0.31-win-x64.zip'
-          $runtimeUrl = 'https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/8.0.31/windowsdesktop-runtime-8.0.31-win-x64.zip'
-          Invoke-WebRequest -Uri $runtimeUrl -OutFile $runtimeZip
-          Expand-Archive -LiteralPath $runtimeZip -DestinationPath "$PWD\portable\runtime" -Force
-          Remove-Item $runtimeZip -Force
-          if (!(Test-Path "$PWD\portable\runtime\dotnet.exe")) {
-            Get-ChildItem "$PWD\portable\runtime" -Force -Recurse | Select-Object -First 80 FullName
-            throw "Portable dotnet.exe missing after direct runtime extraction"
-          }
+          $coreZip = Join-Path $PWD 'dotnet-runtime-8.0.31-win-x64.zip'
+          $desktopZip = Join-Path $PWD 'windowsdesktop-runtime-8.0.31-win-x64.zip'
+          Invoke-WebRequest -Uri 'https://builds.dotnet.microsoft.com/dotnet/Runtime/8.0.31/dotnet-runtime-8.0.31-win-x64.zip' -OutFile $coreZip
+          Invoke-WebRequest -Uri 'https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/8.0.31/windowsdesktop-runtime-8.0.31-win-x64.zip' -OutFile $desktopZip
+          Expand-Archive -LiteralPath $coreZip -DestinationPath "$PWD\portable\runtime" -Force
+          Expand-Archive -LiteralPath $desktopZip -DestinationPath "$PWD\portable\runtime" -Force
+          Remove-Item $coreZip,$desktopZip -Force
+          if (!(Test-Path "$PWD\portable\runtime\dotnet.exe")) { throw "Portable dotnet.exe missing after runtime extraction" }
           & "$PWD\portable\runtime\dotnet.exe" --list-runtimes
+          $listed = (& "$PWD\portable\runtime\dotnet.exe" --list-runtimes | Out-String)
+          if ($listed -notmatch 'Microsoft\.NETCore\.App 8\.0\.31') { throw "Core runtime 8.0.31 missing" }
+          if ($listed -notmatch 'Microsoft\.WindowsDesktop\.App 8\.0\.31') { throw "Desktop runtime 8.0.31 missing" }
 
       - name: Pack portable bundle
         shell: pwsh
