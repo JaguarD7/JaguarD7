@@ -1,9 +1,9 @@
 {
   "name": "Rose Cinematic Ultra",
   "channel": "stable",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "target": "GTA V Legacy + FiveM Legacy",
-  "updated_utc": "2026-10-07T11:40:00Z",
+  "updated_utc": "2026-10-07T17:42:00Z",
   "graphics_base": {
     "repo": "spencerj14/Fivem-Visual-Pack-v2",
     "ref": "master",
@@ -21,6 +21,7 @@
     "rain_wrap_bias": "0.35"
   },
   "notes": [
+    "Fix installer XML validation for valid GTA/FiveM visual files that contain non-standard comment separators.",
     "No ReShade, no DLL injection, no ASI injection.",
     "Does not modify HUD.",
     "Monochrome minimap only.",
