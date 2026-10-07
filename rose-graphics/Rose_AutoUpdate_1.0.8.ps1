@@ -16,12 +16,7 @@ function Get-RoseSha([string]$Path) {
 function Ensure-RosePortableRuntime {
     $dotnet = Join-Path $RuntimeDir 'dotnet.exe'
     $engine = Join-Path $EngineDir 'CodeWalker.OIVInstaller.dll'
-    if ((Test-Path -LiteralPath $dotnet) -and (Test-Path -LiteralPath $engine)) {
-        try {
-            $r = (& $dotnet --list-runtimes 2>$null | Out-String)
-            if ($r -match 'Microsoft\.NETCore\.App 8\.' -and $r -match 'Microsoft\.WindowsDesktop\.App 8\.') { return }
-        } catch {}
-    }
+    # v1.0.8 intentionally refreshes both runtime and engine once so the GTA path handoff fix is guaranteed to replace older cached engines.
 
     New-Item -ItemType Directory -Force -Path $RoseRoot,$Cache | Out-Null
     $zip = Join-Path $Cache 'Rose_DirectRPF_Portable_win-x64.zip'
