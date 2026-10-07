@@ -50,8 +50,8 @@ function Ensure-RosePortableRuntime {
     Remove-Item -LiteralPath $RuntimeDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $EngineDir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $RuntimeDir,$EngineDir | Out-Null
-    Copy-Item -LiteralPath (Join-Path $srcRuntime '*') -Destination $RuntimeDir -Recurse -Force
-    Copy-Item -LiteralPath (Join-Path $srcEngine '*') -Destination $EngineDir -Recurse -Force
+    Copy-Item -Path (Join-Path $srcRuntime '*') -Destination $RuntimeDir -Recurse -Force
+    Copy-Item -Path (Join-Path $srcEngine '*') -Destination $EngineDir -Recurse -Force
     Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
 
     $r = (& (Join-Path $RuntimeDir 'dotnet.exe') --list-runtimes 2>$null | Out-String)
