@@ -1,4 +1,4 @@
-name: Build Rose Direct RPF Engine
+name: Build Rose Portable RPF Engine
 on:
   push:
     branches: [rose-rpf-engine]
@@ -34,53 +34,46 @@ jobs:
           $t = $t.Replace($old,$new)
           Set-Content -Path $p -Value $t -Encoding UTF8
 
-      - name: Setup .NET
+      - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      - name: Publish engine
+      - name: Publish framework-dependent engine
         shell: pwsh
         run: |
-          Remove-Item -Recurse -Force rose-engine -ErrorAction SilentlyContinue
-          dotnet publish cw/CodeWalker.OIVInstaller/CodeWalker.OIVInstaller.csproj -c Release -r win-x64 --self-contained false -o rose-engine
-          if (!(Test-Path "rose-engine/CodeWalker.OIVInstaller.exe")) { throw "Engine build missing" }
-          Copy-Item cw/Notice.txt rose-engine/CodeWalker-Notice.txt
-          Compress-Archive -Path rose-engine/* -DestinationPath Rose_DirectRPF_Engine_win-x64.zip -Force
-          $len=(Get-Item Rose_DirectRPF_Engine_win-x64.zip).Length
-          Write-Host "ZIP bytes: $len"
-          if ($len -gt 99000000) { throw "Engine ZIP exceeds GitHub 100MB file limit" }
-          Get-FileHash Rose_DirectRPF_Engine_win-x64.zip -Algorithm SHA256 | Format-List
+          Remove-Item -Recurse -Force portable -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path portable/engine,portable/runtime | Out-Null
+          dotnet publish cw/CodeWalker.OIVInstaller/CodeWalker.OIVInstaller.csproj -c Release -r win-x64 --self-contained false -o portable/engine
+          if (!(Test-Path "portable/engine/CodeWalker.OIVInstaller.dll")) { throw "Engine build missing" }
 
-      - name: Build robust Rose launcher
+      - name: Download portable .NET 8 Desktop Runtime
         shell: pwsh
         run: |
-          $csc = (Get-ChildItem "$env:WINDIR\Microsoft.NET\Framework64" -Directory |
-            Sort-Object Name -Descending |
-            ForEach-Object { Join-Path $_.FullName 'csc.exe' } |
-            Where-Object { Test-Path $_ } |
-            Select-Object -First 1)
-          if (-not $csc) { throw "csc.exe not found" }
-          New-Item -ItemType Directory -Force -Path releases | Out-Null
-          $src = Join-Path $PWD 'rose-launcher\Program.cs'
-          $manifest = Join-Path $PWD 'rose-launcher\app.manifest'
-          $out = Join-Path $PWD 'releases\Rose_Setup_v1.0.5.exe'
-          & $csc /nologo /target:winexe /platform:x64 /optimize+ "/win32manifest:$manifest" /reference:System.Windows.Forms.dll "/out:$out" "$src"
-          if ($LASTEXITCODE -ne 0) { throw "csc failed" }
-          if (!(Test-Path "releases/Rose_Setup_v1.0.5.exe")) { throw "Launcher build missing" }
-          Get-FileHash releases/Rose_Setup_v1.0.5.exe -Algorithm SHA256 | Format-List
+          Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\dotnet-install.ps1 -Channel 8.0 -Runtime windowsdesktop -Architecture x64 -InstallDir "$PWD\portable\runtime" -NoPath
+          if ($LASTEXITCODE -ne 0) { throw "dotnet-install failed: $LASTEXITCODE" }
+          if (!(Test-Path "portable/runtime/dotnet.exe")) { throw "Portable dotnet.exe missing" }
+          & "$PWD\portable\runtime\dotnet.exe" --list-runtimes
 
-      - name: Commit engine ZIP and launcher
+      - name: Pack portable bundle
         shell: pwsh
         run: |
+          Copy-Item cw/Notice.txt portable/engine/CodeWalker-Notice.txt
+          Remove-Item releases/Rose_DirectRPF_Portable_win-x64.zip -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path releases | Out-Null
-          Move-Item -Force Rose_DirectRPF_Engine_win-x64.zip releases/
+          Compress-Archive -Path portable/* -DestinationPath releases/Rose_DirectRPF_Portable_win-x64.zip -CompressionLevel Optimal -Force
+          $zip = Get-Item releases/Rose_DirectRPF_Portable_win-x64.zip
+          Write-Host "ZIP bytes: $($zip.Length)"
+          if ($zip.Length -gt 99000000) { throw "Portable ZIP exceeds GitHub 100MB file limit" }
+          Get-FileHash releases/Rose_DirectRPF_Portable_win-x64.zip -Algorithm SHA256 | Format-List
+
+      - name: Commit portable bundle
+        shell: pwsh
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add releases/Rose_DirectRPF_Engine_win-x64.zip releases/Rose_Setup_v1.0.5.exe
-          if (git diff --cached --quiet) {
-            Write-Host "No output changes."
-            exit 0
-          }
-          git commit -m "Build Rose Direct RPF engine and launcher [skip ci]"
+          git add releases/Rose_DirectRPF_Portable_win-x64.zip
+          if (git diff --cached --quiet) { exit 0 }
+          git commit -m "Build Rose portable RPF engine [skip ci]"
           git push origin HEAD:rose-rpf-engine
