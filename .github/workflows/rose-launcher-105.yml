@@ -1,7 +1,5 @@
 name: Build Rose Launcher 105
 on:
-  push:
-    branches: [rose-rpf-engine]
   workflow_dispatch:
 
 permissions:
