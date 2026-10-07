@@ -1,9 +1,9 @@
 {
   "name": "Rose Cinematic Ultra",
   "channel": "stable",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "target": "GTA V Legacy - direct update.rpf / x64b.rpf installer",
-  "updated_utc": "2026-10-07T19:21:00Z",
+  "updated_utc": "2026-10-07T19:30:00Z",
   "graphics_base": {
     "repo": "spencerj14/Fivem-Visual-Pack-v2",
     "ref": "master",
@@ -26,23 +26,24 @@
     "fogray_scale": "1.12"
   },
   "notes": [
-    "v1.0.7 fixes the .NET Desktop Runtime failure by using a verified portable .NET 8 Core + Desktop runtime bundle; no system-wide .NET install is required.",
-    "Automatic Rose script updates are active through this manifest. Existing v1.0.6 users only need to close and reopen Rose_Setup.exe.",
-    "Direct GTA V Legacy RPF mode with full backups and rollback.",
-    "No ReShade, DLL injection, ASI injection, HUD edits, or anti-cheat bypass."
+    "v1.0.8 fixes RPF ExitCode 4 by handing the detected GTA V Legacy path to the engine through ROSE_GTA_PATH instead of command-line quoting.",
+    "The error dialog now includes the engine stdout/stderr for any future nonzero exit code.",
+    "Portable .NET 8 Core + Desktop runtime remains bundled; no system-wide .NET install is required.",
+    "Automatic Rose updates remain active. Existing v1.0.6/v1.0.7 users only need to close and reopen Rose_Setup.exe.",
+    "Direct GTA V Legacy RPF mode with backups and rollback. No anti-cheat bypass."
   ],
   "map_zoom": {
     "repo": "dlucre/BluebirdRPLauncher",
     "ref": "fb3f94d44931a6e05e9c6a0a4229d93c6be96bb7",
     "path": "BlueBirdLauncherUI/assets/FiveM/coloredmapfiles/ui/mapzoomdata.meta"
   },
-  "installer_script_version": "1.0.7",
-  "installer_script_url": "https://raw.githubusercontent.com/JaguarD7/JaguarD7/main/rose-graphics/Rose_AutoUpdate_1.0.7.ps1",
-  "installer_script_sha256": "6BB63733C44DD1FBD5162330BF09EB5093FE80D58358B090A1B53E45FE566FE6",
+  "installer_script_version": "1.0.8",
+  "installer_script_url": "https://raw.githubusercontent.com/JaguarD7/JaguarD7/main/rose-graphics/Rose_AutoUpdate_1.0.8.ps1",
+  "installer_script_sha256": "1A3605E078A0923AA2B491AFB87C88743DF7439EDE73EDA0584BF1FEADE4735A",
   "auto_update": true,
   "portable_runtime": {
     "version": "8.0.31",
-    "bundle_url": "https://raw.githubusercontent.com/JaguarD7/JaguarD7/1240631299fe33c7d8f3befa5658078f8151fa79/releases/Rose_DirectRPF_Portable_win-x64.zip",
-    "bundle_sha256": "7506A6BB7BD8E4077DDAD8FC3F759F6344B5BECDBAB5CC147567503C36B36A07"
+    "bundle_url": "https://raw.githubusercontent.com/JaguarD7/JaguarD7/37423fe270924fff094e8c38deb63473aee2074c/releases/Rose_DirectRPF_Portable_win-x64.zip",
+    "bundle_sha256": "1504274B61EB5A05C69D3A2E15A9EAFF0812309B7A313FD0799FA67665D9DA6E"
   }
 }
