@@ -1,0 +1,29 @@
+{
+  "name": "Rose Cinematic Ultra",
+  "channel": "stable",
+  "version": "1.0.0",
+  "target": "GTA V Legacy + FiveM Legacy",
+  "updated_utc": "2026-10-07T11:40:00Z",
+  "graphics_base": {
+    "repo": "spencerj14/Fivem-Visual-Pack-v2",
+    "ref": "master",
+    "root": "Visual Pack/appdata/citizen/common/data"
+  },
+  "map_base": {
+    "repo": "jordantoulain/black-and-white-map",
+    "ref": "main",
+    "root": "San Andreas (without Cayo Bridge)/stream"
+  },
+  "tweaks": {
+    "rain_particles": "3800",
+    "rain_ambient": "0.45",
+    "rain_wrap_scale": "0.65",
+    "rain_wrap_bias": "0.35"
+  },
+  "notes": [
+    "No ReShade, no DLL injection, no ASI injection.",
+    "Does not modify HUD.",
+    "Monochrome minimap only.",
+    "Installer backs up every overwritten FiveM override file."
+  ]
+}
