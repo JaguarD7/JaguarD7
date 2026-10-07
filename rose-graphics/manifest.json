@@ -1,9 +1,9 @@
 {
   "name": "Rose Cinematic Ultra",
   "channel": "stable",
-  "version": "1.0.2",
-  "target": "GTA V Legacy + FiveM Legacy",
-  "updated_utc": "2026-10-07T18:10:00Z",
+  "version": "1.0.3",
+  "target": "FiveM Legacy client-only",
+  "updated_utc": "2026-10-07T18:24:00Z",
   "graphics_base": {
     "repo": "spencerj14/Fivem-Visual-Pack-v2",
     "ref": "master",
@@ -26,10 +26,16 @@
     "fogray_scale": "1.12"
   },
   "notes": [
-    "No ReShade, no DLL injection, no ASI injection.",
-    "Does not modify HUD.",
-    "Monochrome minimap only.",
-    "v1.0.2 detects existing FiveM graphics override locations, installs into every active citizen/common/data root, and verifies hashes after copy.",
-    "Installer backs up every overwritten local client file."
-  ]
+    "FiveM-only installer: no files are written into the GTA V install directory.",
+    "Graphics install to FiveM.app/citizen/common/data.",
+    "Minimap YTDs install to FiveM.app/citizen/platform/data/cdimages/scaleform_generic.",
+    "mapzoomdata.meta installs to FiveM.app/citizen/common/data/ui.",
+    "No ReShade, DLL injection, ASI injection, or HUD edits.",
+    "Backup and SHA-256 verification are performed for every replaced local client file."
+  ],
+  "map_zoom": {
+    "repo": "dlucre/BluebirdRPLauncher",
+    "ref": "fb3f94d44931a6e05e9c6a0a4229d93c6be96bb7",
+    "path": "BlueBirdLauncherUI/assets/FiveM/coloredmapfiles/ui/mapzoomdata.meta"
+  }
 }
