@@ -1,9 +1,9 @@
 {
   "name": "Rose Cinematic Ultra",
   "channel": "stable",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "target": "GTA V Legacy + FiveM Legacy",
-  "updated_utc": "2026-10-07T17:42:00Z",
+  "updated_utc": "2026-10-07T18:10:00Z",
   "graphics_base": {
     "repo": "spencerj14/Fivem-Visual-Pack-v2",
     "ref": "master",
@@ -15,16 +15,21 @@
     "root": "San Andreas (without Cayo Bridge)/stream"
   },
   "tweaks": {
-    "rain_particles": "3800",
-    "rain_ambient": "0.45",
-    "rain_wrap_scale": "0.65",
-    "rain_wrap_bias": "0.35"
+    "rain_particles": "4500",
+    "rain_ambient": "0.48",
+    "rain_wrap_scale": "0.68",
+    "rain_wrap_bias": "0.32",
+    "reflection_exterior": "2.60",
+    "reflection_emissive": "2.80",
+    "water_reflection": "0.35",
+    "bloom_scale": "1.18",
+    "fogray_scale": "1.12"
   },
   "notes": [
-    "Fix installer XML validation for valid GTA/FiveM visual files that contain non-standard comment separators.",
     "No ReShade, no DLL injection, no ASI injection.",
     "Does not modify HUD.",
     "Monochrome minimap only.",
-    "Installer backs up every overwritten FiveM override file."
+    "v1.0.2 detects existing FiveM graphics override locations, installs into every active citizen/common/data root, and verifies hashes after copy.",
+    "Installer backs up every overwritten local client file."
   ]
 }
