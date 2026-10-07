@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
 
 $RoseRoot = Join-Path $env:LOCALAPPDATA 'RoseGraphicsDirect'
 $Cache = Join-Path $RoseRoot 'cache'
@@ -71,13 +72,16 @@ function Find-RoseOriginalScript {
     throw 'Rose_Setup.ps1 was not found. Keep the EXE and PS1 together in the extracted Rose folder.'
 }
 
-Ensure-RosePortableRuntime
-$original = Find-RoseOriginalScript
-$text = Get-Content -LiteralPath $original -Raw -Encoding UTF8
+try {
+    [System.Windows.Forms.MessageBox]::Show('Rose v1.0.7 is updating automatically. A portable runtime bundle will be downloaded once; no system .NET install is required.','Rose Auto Update','OK','Information') | Out-Null
+    Ensure-RosePortableRuntime
+    $original = Find-RoseOriginalScript
+    $text = Get-Content -LiteralPath $original -Raw -Encoding UTF8
 $text = $text.Replace("`$RoseVersion = '1.0.6'","`$RoseVersion = '1.0.7'")
 $text = $text.Replace("`$RoseScriptVersion = '1.0.6'","`$RoseScriptVersion = '1.0.7'")
 $text = $text.Replace('GTA V Legacy - Direct update.rpf / x64b.rpf installer','GTA V Legacy - Direct RPF installer + Auto Update')
 $text = $text.Replace('Client-side visual/map files only. No anti-cheat bypass.','Client-side visual/map files only. Portable runtime + automatic Rose updates. No anti-cheat bypass.')
+    $text = $text.Replace('جاهز - v1.0.4 Direct RPF','جاهز - v1.0.7 Direct RPF + Auto Update')
 
 $marker = '# ROSE_AUTOUPDATE_PORTABLE_107'
 if ($text -notmatch [regex]::Escape($marker)) {
@@ -88,7 +92,10 @@ $marker
 "@
     $text = $prefix + "`r`n" + $text
 }
-Set-Content -LiteralPath $original -Value $text -Encoding UTF8
-
-Start-Process powershell.exe -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $original + '"') -WorkingDirectory (Split-Path $original -Parent) | Out-Null
-exit
+    Set-Content -LiteralPath $original -Value $text -Encoding UTF8
+    Start-Process powershell.exe -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $original + '"') -WorkingDirectory (Split-Path $original -Parent) | Out-Null
+    exit
+} catch {
+    [System.Windows.Forms.MessageBox]::Show(('Rose automatic update failed:' + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message),'Rose Auto Update','OK','Error') | Out-Null
+    exit 1
+}
