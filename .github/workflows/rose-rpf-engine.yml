@@ -23,7 +23,7 @@ jobs:
           ref: master
           path: cw
 
-      - name: Patch direct-game RPF mode
+      - name: Patch direct-game RPF mode and Rose GTA path handoff
         shell: pwsh
         run: |
           $p = "cw/CodeWalker.OIVInstaller/Engine/OivInstaller.cs"
@@ -33,6 +33,14 @@ jobs:
           if (-not $t.Contains($old)) { throw "Expected ModsFolder line not found" }
           $t = $t.Replace($old,$new)
           Set-Content -Path $p -Value $t -Encoding UTF8
+
+          $cli = "cw/CodeWalker.OIVInstaller/Cli/Program.cs"
+          $c = Get-Content $cli -Raw
+          $oldCli = 'string gameFolder = OivAppConfig.Load().LastGameFolder; // Use default if set'
+          $newCli = 'string gameFolder = Environment.GetEnvironmentVariable("ROSE_GTA_PATH") ?? OivAppConfig.Load().LastGameFolder; // Rose env handoff avoids Windows command-line quoting/path issues'
+          if (-not $c.Contains($oldCli)) { throw "Expected gameFolder line not found" }
+          $c = $c.Replace($oldCli,$newCli)
+          Set-Content -Path $cli -Value $c -Encoding UTF8
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
@@ -67,7 +75,7 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item cw/Notice.txt portable/engine/CodeWalker-Notice.txt
-          Remove-Item releases/Rose_DirectRPF_Portable_win-x64.zip -Force -ErrorAction SilentlyContinue
+          Remove-Item releases/Rose_DirectRPF_Portable_v108_win-x64.zip -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path releases | Out-Null
           Compress-Archive -Path portable/* -DestinationPath releases/Rose_DirectRPF_Portable_win-x64.zip -CompressionLevel Optimal -Force
           $zip = Get-Item releases/Rose_DirectRPF_Portable_win-x64.zip
@@ -82,6 +90,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add releases/Rose_DirectRPF_Portable_win-x64.zip
           if (git diff --cached --quiet) { exit 0 }
-          git commit -m "Build Rose portable RPF engine [skip ci]"
+          git commit -m "Build Rose portable RPF engine v108 [skip ci]"
           git pull --rebase origin rose-rpf-engine
           git push origin HEAD:rose-rpf-engine
