@@ -23,17 +23,9 @@ jobs:
           ref: master
           path: cw
 
-      - name: Patch direct-game RPF mode and Rose GTA path handoff
+      - name: Patch Rose GTA path handoff for mods-folder install
         shell: pwsh
         run: |
-          $p = "cw/CodeWalker.OIVInstaller/Engine/OivInstaller.cs"
-          $t = Get-Content $p -Raw
-          $old = 'public string ModsFolder => Path.Combine(GameFolder, "mods");'
-          $new = 'public string ModsFolder => GameFolder;'
-          if (-not $t.Contains($old)) { throw "Expected ModsFolder line not found" }
-          $t = $t.Replace($old,$new)
-          Set-Content -Path $p -Value $t -Encoding UTF8
-
           $cli = "cw/CodeWalker.OIVInstaller/Cli/Program.cs"
           $c = Get-Content $cli -Raw
           $oldCli = 'string gameFolder = OivAppConfig.Load().LastGameFolder; // Use default if set'
@@ -75,21 +67,21 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item cw/Notice.txt portable/engine/CodeWalker-Notice.txt
-          Remove-Item releases/Rose_DirectRPF_Portable_v108_win-x64.zip -Force -ErrorAction SilentlyContinue
+          Remove-Item releases/Rose_ModsRPF_Portable_v109_win-x64.zip -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path releases | Out-Null
-          Compress-Archive -Path portable/* -DestinationPath releases/Rose_DirectRPF_Portable_win-x64.zip -CompressionLevel Optimal -Force
-          $zip = Get-Item releases/Rose_DirectRPF_Portable_win-x64.zip
+          Compress-Archive -Path portable/* -DestinationPath releases/Rose_ModsRPF_Portable_v109_win-x64.zip -CompressionLevel Optimal -Force
+          $zip = Get-Item releases/Rose_ModsRPF_Portable_v109_win-x64.zip
           Write-Host "ZIP bytes: $($zip.Length)"
           if ($zip.Length -gt 99000000) { throw "Portable ZIP exceeds GitHub 100MB file limit" }
-          Get-FileHash releases/Rose_DirectRPF_Portable_win-x64.zip -Algorithm SHA256 | Format-List
+          Get-FileHash releases/Rose_ModsRPF_Portable_v109_win-x64.zip -Algorithm SHA256 | Format-List
 
       - name: Commit portable bundle
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add releases/Rose_DirectRPF_Portable_win-x64.zip
+          git add releases/Rose_ModsRPF_Portable_v109_win-x64.zip
           if (git diff --cached --quiet) { exit 0 }
-          git commit -m "Build Rose portable RPF engine v108 [skip ci]"
+          git commit -m "Build Rose mods-folder RPF engine v109 [skip ci]"
           git pull --rebase origin rose-rpf-engine
           git push origin HEAD:rose-rpf-engine
