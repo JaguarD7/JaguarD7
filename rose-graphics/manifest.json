@@ -1,9 +1,9 @@
 {
   "name": "Rose Cinematic Ultra",
   "channel": "stable",
-  "version": "1.0.3",
-  "target": "FiveM Legacy client-only",
-  "updated_utc": "2026-10-07T18:24:00Z",
+  "version": "1.0.7",
+  "target": "GTA V Legacy - direct update.rpf / x64b.rpf installer",
+  "updated_utc": "2026-10-07T19:18:30Z",
   "graphics_base": {
     "repo": "spencerj14/Fivem-Visual-Pack-v2",
     "ref": "master",
@@ -26,16 +26,23 @@
     "fogray_scale": "1.12"
   },
   "notes": [
-    "FiveM-only installer: no files are written into the GTA V install directory.",
-    "Graphics install to FiveM.app/citizen/common/data.",
-    "Minimap YTDs install to FiveM.app/citizen/platform/data/cdimages/scaleform_generic.",
-    "mapzoomdata.meta installs to FiveM.app/citizen/common/data/ui.",
-    "No ReShade, DLL injection, ASI injection, or HUD edits.",
-    "Backup and SHA-256 verification are performed for every replaced local client file."
+    "v1.0.7 fixes the .NET Desktop Runtime failure by using a verified portable .NET 8 Core + Desktop runtime bundle; no system-wide .NET install is required.",
+    "Automatic Rose script updates are active through this manifest. Existing v1.0.6 users only need to close and reopen Rose_Setup.exe.",
+    "Direct GTA V Legacy RPF mode with full backups and rollback.",
+    "No ReShade, DLL injection, ASI injection, HUD edits, or anti-cheat bypass."
   ],
   "map_zoom": {
     "repo": "dlucre/BluebirdRPLauncher",
     "ref": "fb3f94d44931a6e05e9c6a0a4229d93c6be96bb7",
     "path": "BlueBirdLauncherUI/assets/FiveM/coloredmapfiles/ui/mapzoomdata.meta"
+  },
+  "installer_script_version": "1.0.7",
+  "installer_script_url": "https://raw.githubusercontent.com/JaguarD7/JaguarD7/main/rose-graphics/Rose_AutoUpdate_1.0.7.ps1",
+  "installer_script_sha256": "EE45DD6E0E81FA691771CF653CAE76DC3CAEE0A6BF519080A3DF9A2A98E839BB",
+  "auto_update": true,
+  "portable_runtime": {
+    "version": "8.0.31",
+    "bundle_url": "https://raw.githubusercontent.com/JaguarD7/JaguarD7/1240631299fe33c7d8f3befa5658078f8151fa79/releases/Rose_DirectRPF_Portable_win-x64.zip",
+    "bundle_sha256": "7506A6BB7BD8E4077DDAD8FC3F759F6344B5BECDBAB5CC147567503C36B36A07"
   }
 }
