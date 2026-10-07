@@ -43,9 +43,11 @@ jobs:
         shell: pwsh
         run: |
           Remove-Item -Recurse -Force portable -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path portable/engine,portable/runtime | Out-Null
+          New-Item -ItemType Directory -Force -Path portable/engine,portable/runtime,portable/packer | Out-Null
           dotnet publish cw/CodeWalker.OIVInstaller/CodeWalker.OIVInstaller.csproj -c Release -r win-x64 --self-contained false -o portable/engine
           if (!(Test-Path "portable/engine/CodeWalker.OIVInstaller.dll")) { throw "Engine build missing" }
+          dotnet publish rose-packer/RoseRpfPacker.csproj -c Release -r win-x64 --self-contained false -o portable/packer
+          if (!(Test-Path "portable/packer/RoseRpfPacker.dll")) { throw "RoseRpfPacker build missing" }
 
       - name: Download portable .NET 8 runtimes
         shell: pwsh
@@ -67,21 +69,21 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item cw/Notice.txt portable/engine/CodeWalker-Notice.txt
-          Remove-Item releases/Rose_ModsRPF_Portable_v109_win-x64.zip -Force -ErrorAction SilentlyContinue
+          Remove-Item releases/Rose_FiveM_PackageTools_v111_win-x64.zip -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path releases | Out-Null
-          Compress-Archive -Path portable/* -DestinationPath releases/Rose_ModsRPF_Portable_v109_win-x64.zip -CompressionLevel Optimal -Force
-          $zip = Get-Item releases/Rose_ModsRPF_Portable_v109_win-x64.zip
+          Compress-Archive -Path portable/* -DestinationPath releases/Rose_FiveM_PackageTools_v111_win-x64.zip -CompressionLevel Optimal -Force
+          $zip = Get-Item releases/Rose_FiveM_PackageTools_v111_win-x64.zip
           Write-Host "ZIP bytes: $($zip.Length)"
           if ($zip.Length -gt 99000000) { throw "Portable ZIP exceeds GitHub 100MB file limit" }
-          Get-FileHash releases/Rose_ModsRPF_Portable_v109_win-x64.zip -Algorithm SHA256 | Format-List
+          Get-FileHash releases/Rose_FiveM_PackageTools_v111_win-x64.zip -Algorithm SHA256 | Format-List
 
       - name: Commit portable bundle
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add releases/Rose_ModsRPF_Portable_v109_win-x64.zip
+          git add releases/Rose_FiveM_PackageTools_v111_win-x64.zip
           if (git diff --cached --quiet) { exit 0 }
-          git commit -m "Build Rose mods-folder RPF engine v109 [skip ci]"
+          git commit -m "Build Rose FiveM package tools v111 [skip ci]"
           git pull --rebase origin rose-rpf-engine
           git push origin HEAD:rose-rpf-engine
