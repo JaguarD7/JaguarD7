@@ -3,7 +3,7 @@
   "channel": "stable",
   "version": "1.0.7",
   "target": "GTA V Legacy - direct update.rpf / x64b.rpf installer",
-  "updated_utc": "2026-10-07T19:18:30Z",
+  "updated_utc": "2026-10-07T19:21:00Z",
   "graphics_base": {
     "repo": "spencerj14/Fivem-Visual-Pack-v2",
     "ref": "master",
@@ -38,7 +38,7 @@
   },
   "installer_script_version": "1.0.7",
   "installer_script_url": "https://raw.githubusercontent.com/JaguarD7/JaguarD7/main/rose-graphics/Rose_AutoUpdate_1.0.7.ps1",
-  "installer_script_sha256": "EE45DD6E0E81FA691771CF653CAE76DC3CAEE0A6BF519080A3DF9A2A98E839BB",
+  "installer_script_sha256": "6BB63733C44DD1FBD5162330BF09EB5093FE80D58358B090A1B53E45FE566FE6",
   "auto_update": true,
   "portable_runtime": {
     "version": "8.0.31",
