@@ -32,7 +32,7 @@ internal static class Program
             using (var fs = File.OpenRead(output))
             using (var br = new BinaryReader(fs))
             {
-                verify.ScanStructure(br, null, null);
+                verify.ScanStructure(null, null);
             }
 
             bool hasAssembly = false;
