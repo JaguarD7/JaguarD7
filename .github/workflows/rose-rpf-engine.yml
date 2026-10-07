@@ -52,17 +52,32 @@ jobs:
           if ($len -gt 99000000) { throw "Engine ZIP exceeds GitHub 100MB file limit" }
           Get-FileHash Rose_DirectRPF_Engine_win-x64.zip -Algorithm SHA256 | Format-List
 
-      - name: Commit engine ZIP
+      - name: Build robust Rose launcher
+        shell: pwsh
+        run: |
+          $csc = (Get-ChildItem "$env:WINDIR\Microsoft.NET\Framework64" -Directory |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName 'csc.exe' } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1)
+          if (-not $csc) { throw "csc.exe not found" }
+          New-Item -ItemType Directory -Force -Path releases | Out-Null
+          & $csc /nologo /target:winexe /platform:x64 /optimize+ /win32manifest:rose-launcher/app.manifest /reference:System.Windows.Forms.dll /out:releases/Rose_Setup_v1.0.5.exe rose-launcher/Program.cs
+          if ($LASTEXITCODE -ne 0) { throw "csc failed" }
+          if (!(Test-Path "releases/Rose_Setup_v1.0.5.exe")) { throw "Launcher build missing" }
+          Get-FileHash releases/Rose_Setup_v1.0.5.exe -Algorithm SHA256 | Format-List
+
+      - name: Commit engine ZIP and launcher
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path releases | Out-Null
           Move-Item -Force Rose_DirectRPF_Engine_win-x64.zip releases/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add releases/Rose_DirectRPF_Engine_win-x64.zip
+          git add releases/Rose_DirectRPF_Engine_win-x64.zip releases/Rose_Setup_v1.0.5.exe
           if (git diff --cached --quiet) {
             Write-Host "No output changes."
             exit 0
           }
-          git commit -m "Build Rose Direct RPF engine [skip ci]"
+          git commit -m "Build Rose Direct RPF engine and launcher [skip ci]"
           git push origin HEAD:rose-rpf-engine
